@@ -2,8 +2,17 @@ import SwiftUI
 import SwiftData
 
 struct MeView: View {
+    @Environment(\.modelContext) private var modelContext
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage("lastDismissedReviewWeek") private var lastDismissedReviewWeek = ""
+    @AppStorage("didNormalizeStageGoalV2") private var didNormalizeStageGoalV2 = false
     @Query private var profiles: [UserProfile]
+    @Query private var workouts: [WorkoutBaseline]
+    @Query private var weights: [WeightEntry]
     @Query private var presets: [FoodPreset]
+    @Query private var foodLogs: [FoodLogEntry]
+    @Query private var budgets: [DailyBudget]
+    @State private var showingResetConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -41,6 +50,25 @@ struct MeView: View {
                             settingsLabel("我的食材库", symbol: "fork.knife", detail: "\(presets.count) 项")
                         }
                     }
+                    Section("数据管理") {
+                        Button {
+                            showingResetConfirmation = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .frame(width: 30, height: 30)
+                                    .foregroundStyle(.red)
+                                    .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("重置全部数据").foregroundStyle(.red)
+                                    Text("清空记录并重新进行初始设置")
+                                        .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .accessibilityIdentifier("reset-all-data")
+                    }
                     Section("关于") {
                         NavigationLink { CalculationExplanationView() } label: {
                             settingsLabel("消耗如何计算", symbol: "function", detail: "估算与校准")
@@ -52,6 +80,30 @@ struct MeView: View {
             }
             .appScreenBackground()
             .navigationTitle("我的")
+            .sheet(isPresented: $showingResetConfirmation) {
+                ResetDataConfirmationSheet(onConfirm: resetAllData)
+                    .presentationDetents([.height(570)])
+            }
+        }
+    }
+
+    private func resetAllData() {
+        foodLogs.forEach(modelContext.delete)
+        budgets.forEach(modelContext.delete)
+        weights.forEach(modelContext.delete)
+        workouts.forEach(modelContext.delete)
+        presets.forEach(modelContext.delete)
+        profiles.forEach(modelContext.delete)
+
+        do {
+            try modelContext.save()
+            lastDismissedReviewWeek = ""
+            didNormalizeStageGoalV2 = false
+            withAnimation(.easeInOut(duration: 0.3)) {
+                hasCompletedOnboarding = false
+            }
+        } catch {
+            // Keep the current screen if local deletion fails so the user can retry safely.
         }
     }
 
@@ -65,6 +117,70 @@ struct MeView: View {
             Spacer()
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }
+    }
+}
+
+struct ResetDataConfirmationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            BrandSheetHeader(
+                title: "确认重置数据",
+                subtitle: "这是不可撤销的操作",
+                symbol: "exclamationmark.triangle.fill"
+            ) { dismiss() }
+            VStack(spacing: 18) {
+                VStack(spacing: 12) {
+                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                        .font(.system(size: 52))
+                        .foregroundStyle(.red)
+                    Text("要重新开始吗？")
+                        .font(.title2.bold())
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text("确认后会清除这台手机里的全部天天健康数据，并回到首次打开的设置流程。")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                BrandSection("将被清除") {
+                    resetItem("身体资料与减脂目标")
+                    resetItem("体重、热量和饮食记录")
+                    resetItem("个人食材库与运动基准")
+                    resetItem("每周热量预算")
+                }
+                Spacer(minLength: 0)
+                VStack(spacing: 10) {
+                    Button {
+                        onConfirm()
+                        dismiss()
+                    } label: {
+                        Text("确认清除全部数据")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .background(Color.red, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("confirm-reset-all-data")
+                    Button("取消，保留数据") { dismiss() }
+                        .buttonStyle(BrandButtonStyle(isSecondary: true))
+                }
+            }
+            .padding(20)
+        }
+        .background(AppTheme.background.ignoresSafeArea())
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(30)
+    }
+
+    private func resetItem(_ title: String) -> some View {
+        Label(title, systemImage: "minus.circle.fill")
+            .font(.subheadline)
+            .foregroundStyle(AppTheme.secondaryText)
     }
 }
 

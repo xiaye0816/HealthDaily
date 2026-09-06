@@ -86,6 +86,15 @@ final class TiantianHealthUITests: XCTestCase {
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["我的食材库"].exists)
+
+        let resetButton = app.buttons["reset-all-data"]
+        for _ in 0..<3 where !resetButton.isHittable { app.swipeUp() }
+        XCTAssertTrue(resetButton.waitForExistence(timeout: 3))
+        resetButton.tap()
+        XCTAssertTrue(app.staticTexts["确认重置数据"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["体重、热量和饮食记录"].exists)
+        app.buttons["confirm-reset-all-data"].tap()
+        XCTAssertTrue(app.staticTexts["先认识一下你"].waitForExistence(timeout: 6))
     }
 
     private func capture(_ name: String) {
