@@ -11,7 +11,16 @@ final class TiantianHealthUITests: XCTestCase {
     }
 
     func testCoreMVPFlow() throws {
-        XCTAssertTrue(app.staticTexts["先认识一下你"].waitForExistence(timeout: 8))
+        let onboardingTitle = app.staticTexts["先认识一下你"]
+        let brandSplash = app.otherElements["brand-splash"]
+        XCTAssertTrue(onboardingTitle.waitForExistence(timeout: 8))
+        XCTAssertFalse(brandSplash.exists)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(onboardingTitle.waitForExistence(timeout: 3))
+        XCTAssertFalse(brandSplash.exists)
+
         capture("01-onboarding")
         app.buttons["birth-month-row"].tap()
         XCTAssertTrue(app.staticTexts["出生年月"].waitForExistence(timeout: 3))
@@ -95,6 +104,7 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["体重、热量和饮食记录"].exists)
         app.buttons["confirm-reset-all-data"].tap()
         XCTAssertTrue(app.staticTexts["先认识一下你"].waitForExistence(timeout: 6))
+        XCTAssertFalse(brandSplash.exists)
     }
 
     private func capture(_ name: String) {
