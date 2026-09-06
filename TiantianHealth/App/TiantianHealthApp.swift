@@ -36,7 +36,9 @@ struct TiantianHealthApp: App {
 }
 
 struct RootView: View {
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage("didNormalizeStageGoalV2") private var didNormalizeStageGoalV2 = false
     @Query private var profiles: [UserProfile]
 
     var body: some View {
@@ -52,5 +54,15 @@ struct RootView: View {
             }
         }
         .tint(AppTheme.green)
+        .preferredColorScheme(.light)
+        .task(id: profiles.first?.id) {
+            guard !didNormalizeStageGoalV2, let profile = profiles.first else { return }
+            let range = HealthCalculator.healthyStageRange(weightKG: profile.initialWeightKG)
+            if !range.contains(profile.targetWeightKG) {
+                profile.targetWeightKG = HealthCalculator.healthyStageTarget(weightKG: profile.initialWeightKG)
+                try? modelContext.save()
+            }
+            didNormalizeStageGoalV2 = true
+        }
     }
 }

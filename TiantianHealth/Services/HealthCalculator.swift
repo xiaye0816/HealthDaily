@@ -1,6 +1,10 @@
 import Foundation
 
 enum HealthCalculator {
+    static func age(from birthDate: Date, on referenceDate: Date = .now) -> Int {
+        max(0, Calendar.current.dateComponents([.year], from: birthDate, to: referenceDate).year ?? 0)
+    }
+
     static func restingEnergy(sex: BiologicalSex, age: Int, heightCM: Double, weightKG: Double) -> Double {
         let adjustment = sex == .male ? 5.0 : -161.0
         return max(0, 10 * weightKG + 6.25 * heightCM - 5 * Double(age) + adjustment)
@@ -25,20 +29,28 @@ enum HealthCalculator {
     }
 
     static func dailyWorkoutEnergy(weightKG: Double, workouts: [WorkoutDraft]) -> Double {
+        weeklyWorkoutEnergy(weightKG: weightKG, workouts: workouts) / 7
+    }
+
+    static func weeklyWorkoutEnergy(weightKG: Double, workouts: [WorkoutDraft]) -> Double {
         workouts.reduce(0) { result, workout in
             guard !workout.includedInSteps else { return result }
             let netMET = max(0, workout.met - 1)
             let weekly = netMET * weightKG * (Double(workout.durationMinutes) / 60) * workout.sessionsPerWeek
-            return result + weekly / 7
+            return result + weekly
         }
     }
 
     static func dailyWorkoutEnergy(weightKG: Double, workouts: [WorkoutBaseline]) -> Double {
+        weeklyWorkoutEnergy(weightKG: weightKG, workouts: workouts) / 7
+    }
+
+    static func weeklyWorkoutEnergy(weightKG: Double, workouts: [WorkoutBaseline]) -> Double {
         workouts.reduce(0) { result, workout in
             guard !workout.includedInSteps else { return result }
             let netMET = max(0, workout.met - 1)
             let weekly = netMET * weightKG * (Double(workout.durationMinutes) / 60) * workout.sessionsPerWeek
-            return result + weekly / 7
+            return result + weekly
         }
     }
 
@@ -55,12 +67,30 @@ enum HealthCalculator {
     }
 
     static func baselineTDEE(profile: UserProfile, weightKG: Double, workouts: [WorkoutBaseline]) -> Double {
-        let resting = restingEnergy(sex: profile.sex, age: profile.age, heightCM: profile.heightCM, weightKG: weightKG)
+        let resting = restingEnergy(sex: profile.sex, age: profile.currentAge, heightCM: profile.heightCM, weightKG: weightKG)
         return resting + stepEnergy(restingEnergy: resting, averageSteps: profile.averageSteps) + dailyWorkoutEnergy(weightKG: weightKG, workouts: workouts)
     }
 
     static func desiredDailyDeficit(weightKG: Double, pace: GoalPace) -> Double {
         weightKG * pace.weeklyBodyWeightFraction * 7_700 / 7
+    }
+
+    static func healthyStageTarget(weightKG: Double) -> Double {
+        (weightKG * 0.95 * 10).rounded() / 10
+    }
+
+    static func healthyStageRange(weightKG: Double) -> ClosedRange<Double> {
+        let lower = max(30, (weightKG * 0.90 * 10).rounded() / 10)
+        let upper = max(lower, ((weightKG - 0.5) * 10).rounded() / 10)
+        return lower...upper
+    }
+
+    static func plannedDeficit(tdee: Double, calorieTarget: Double) -> Double {
+        max(0, tdee - calorieTarget)
+    }
+
+    static func theoreticalFatEquivalentKG(calorieDeficit: Double) -> Double {
+        max(0, calorieDeficit) / 7_700
     }
 
     static func dailyCalorieTarget(tdee: Double, weightKG: Double, pace: GoalPace, sex: BiologicalSex) -> Double {

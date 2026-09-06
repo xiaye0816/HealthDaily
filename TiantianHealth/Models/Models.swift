@@ -80,6 +80,7 @@ final class UserProfile {
     var id: UUID
     var sexRaw: String
     var age: Int
+    var birthDate: Date?
     var heightCM: Double
     var weightUnitRaw: String
     var initialWeightKG: Double
@@ -93,7 +94,7 @@ final class UserProfile {
 
     init(
         sex: BiologicalSex,
-        age: Int,
+        birthDate: Date,
         heightCM: Double,
         weightUnit: WeightUnit,
         initialWeightKG: Double,
@@ -104,7 +105,8 @@ final class UserProfile {
     ) {
         id = UUID()
         sexRaw = sex.rawValue
-        self.age = age
+        self.birthDate = Calendar.current.startOfDay(for: birthDate)
+        age = HealthCalculator.age(from: birthDate)
         self.heightCM = heightCM
         weightUnitRaw = weightUnit.rawValue
         self.initialWeightKG = initialWeightKG
@@ -130,6 +132,10 @@ final class UserProfile {
     var pace: GoalPace {
         get { GoalPace(rawValue: paceRaw) ?? .gentle }
         set { paceRaw = newValue.rawValue }
+    }
+
+    var currentAge: Int {
+        birthDate.map { HealthCalculator.age(from: $0) } ?? age
     }
 }
 

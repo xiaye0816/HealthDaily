@@ -12,12 +12,34 @@ final class TiantianHealthUITests: XCTestCase {
 
     func testCoreMVPFlow() throws {
         XCTAssertTrue(app.staticTexts["先认识一下你"].waitForExistence(timeout: 8))
+        capture("01-onboarding")
+        app.buttons["birth-month-row"].tap()
+        XCTAssertTrue(app.staticTexts["出生年月"].waitForExistence(timeout: 3))
+        app.buttons["关闭"].tap()
+        app.buttons["height-row"].tap()
+        XCTAssertTrue(app.staticTexts["选择身高"].waitForExistence(timeout: 3))
+        app.buttons["关闭"].tap()
+        app.buttons["current-weight-row"].tap()
+        XCTAssertTrue(app.staticTexts["选择当前体重"].waitForExistence(timeout: 3))
+        capture("02-weight-wheel")
+        app.buttons["关闭"].tap()
         app.buttons["继续"].tap()
         XCTAssertTrue(app.staticTexts["设置活动消耗基准"].waitForExistence(timeout: 3))
+        app.buttons["添加"].tap()
+        XCTAssertTrue(app.staticTexts["固定运动"].waitForExistence(timeout: 3))
+        capture("03-workout-sheet")
+        app.buttons["关闭"].tap()
         app.buttons["继续"].tap()
         XCTAssertTrue(app.staticTexts["你想以什么节奏前进？"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["阶段目标"].exists)
+        app.buttons["target-weight-row"].tap()
+        XCTAssertTrue(app.staticTexts["设置阶段目标"].waitForExistence(timeout: 3))
+        app.buttons["关闭"].tap()
         app.buttons["继续"].tap()
         XCTAssertTrue(app.staticTexts["你的起步计划"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["计划热量缺口"].exists)
+        XCTAssertTrue(app.staticTexts["理论脂肪量"].exists)
+        capture("04-plan-preview")
         app.buttons["开始使用"].tap()
 
         XCTAssertTrue(app.navigationBars["今天"].waitForExistence(timeout: 8))
@@ -32,7 +54,8 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["记录饮食"].tap()
         XCTAssertTrue(app.buttons["新建食物"].waitForExistence(timeout: 4))
         app.buttons["新建食物"].tap()
-        XCTAssertTrue(app.navigationBars["新建食物"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["新建食物"].waitForExistence(timeout: 4))
+        capture("05-food-editor")
 
         let nameField = app.textFields["名称，例如：煎鸡胸"]
         nameField.tap()
@@ -63,5 +86,12 @@ final class TiantianHealthUITests: XCTestCase {
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["我的食材库"].exists)
+    }
+
+    private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

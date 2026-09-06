@@ -106,20 +106,20 @@ struct BudgetView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(isToday ? "今天" : (isPast ? "已完成" : "计划"))
-                                    .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                    .font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
                                 if budget.isLocked { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary) }
                             }
                             SwiftUI.ProgressView(value: min(consumed(on: budget.date), max(budget.targetCalories, 1)), total: max(budget.targetCalories, 1))
                                 .tint(isPast ? .secondary : AppTheme.green)
                         }
                         VStack(alignment: .trailing, spacing: 3) {
-                            Text("\(Int(budget.targetCalories))").font(.headline.monospacedDigit()).foregroundStyle(.primary)
+                            Text("\(Int(budget.targetCalories))").font(.headline.monospacedDigit()).foregroundStyle(AppTheme.textPrimary)
                             Text("已用 \(Int(consumed(on: budget.date)))").font(.caption2).foregroundStyle(.secondary)
                         }
                         if !isPast { Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
                     }
                     .padding(14)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .disabled(isPast)
@@ -260,7 +260,7 @@ struct BudgetEditSheet: View {
         Button(action: action) {
             Label(label, systemImage: symbol).font(.subheadline.bold())
                 .padding(.horizontal, 15).padding(.vertical, 10)
-                .background(.background, in: Capsule())
+                .background(AppTheme.surface, in: Capsule())
         }
         .buttonStyle(.plain)
     }

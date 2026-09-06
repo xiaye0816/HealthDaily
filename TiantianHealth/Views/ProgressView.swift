@@ -112,7 +112,7 @@ struct ProgressView: View {
                     }
                     .chartYAxis {
                         AxisMarks(position: .leading) { _ in
-                            AxisGridLine().foregroundStyle(Color.primary.opacity(0.07))
+                            AxisGridLine().foregroundStyle(AppTheme.divider.opacity(0.8))
                             AxisValueLabel()
                         }
                     }
@@ -136,10 +136,37 @@ struct ProgressView: View {
                 }
                 Divider()
                 if let profile {
-                    let resting = HealthCalculator.restingEnergy(sex: profile.sex, age: profile.age, heightCM: profile.heightCM, weightKG: latestWeight)
+                    let resting = HealthCalculator.restingEnergy(sex: profile.sex, age: profile.currentAge, heightCM: profile.heightCM, weightKG: latestWeight)
+                    let weeklyWorkout = HealthCalculator.weeklyWorkoutEnergy(weightKG: latestWeight, workouts: workouts)
+                    let dailyTarget = HealthCalculator.dailyCalorieTarget(tdee: profile.calibratedTDEE, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
+                    let dailyDeficit = HealthCalculator.plannedDeficit(tdee: profile.calibratedTDEE, calorieTarget: dailyTarget)
                     expenditureRow("静息消耗", resting)
                     expenditureRow("日常步数", HealthCalculator.stepEnergy(restingEnergy: resting, averageSteps: profile.averageSteps))
-                    expenditureRow("固定运动均摊", HealthCalculator.dailyWorkoutEnergy(weightKG: latestWeight, workouts: workouts))
+                    expenditureRow("固定运动 · 周总", weeklyWorkout)
+                    expenditureRow("固定运动 · 计入日均", weeklyWorkout / 7)
+                    Divider().overlay(AppTheme.divider)
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack {
+                            Label("计划热量缺口", systemImage: "scope")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.orange)
+                            Spacer()
+                            Text("\(Int(dailyDeficit.rounded())) kcal / 天")
+                                .font(.headline.monospacedDigit())
+                        }
+                        HStack {
+                            Text("每周约 \(Int((dailyDeficit * 7).rounded())) kcal")
+                            Spacer()
+                            Text("理论约 \(HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: dailyDeficit * 7).formatted(.number.precision(.fractionLength(2)))) kg 脂肪")
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        Text("理论换算用于理解目标感，体重短期仍会受水分等因素影响。")
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .padding(13)
+                    .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 14))
                 }
             }
         }
@@ -158,13 +185,13 @@ struct ProgressView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(entry.date.formatted(.dateTime.month().day().weekday(.abbreviated)))
-                                            .font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                            .font(.subheadline.weight(.medium)).foregroundStyle(AppTheme.textPrimary)
                                         Text(DateTools.isSameDay(entry.date, .now) ? "今天" : "点击可修改")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Text("\(unit.displayValue(fromKilograms: entry.weightKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
-                                        .font(.headline.monospacedDigit()).foregroundStyle(.primary)
+                                        .font(.headline.monospacedDigit()).foregroundStyle(AppTheme.textPrimary)
                                     Button(role: .destructive) { deletingEntry = entry } label: {
                                         Image(systemName: "trash").foregroundStyle(.tertiary)
                                     }

@@ -27,7 +27,7 @@ struct MeView: View {
                 if let profile = profiles.first {
                     Section("计划设置") {
                         NavigationLink { BodySettingsView(profile: profile) } label: {
-                            settingsLabel("身体资料", symbol: "person.text.rectangle", detail: "年龄、身高、单位")
+                            settingsLabel("身体资料", symbol: "person.text.rectangle", detail: "出生年月、身高、单位")
                         }
                         NavigationLink { ActivitySettingsView(profile: profile) } label: {
                             settingsLabel("活动消耗基准", symbol: "figure.walk", detail: "\(profile.averageSteps.formatted()) 步/天")
@@ -77,14 +77,16 @@ struct BodySettingsView: View {
 
     let profile: UserProfile
     @State private var sex: BiologicalSex
-    @State private var age: Int
+    @State private var birthDate: Date
     @State private var heightCM: Double
     @State private var unit: WeightUnit
+    @State private var showingBirthPicker = false
+    @State private var showingHeightPicker = false
 
     init(profile: UserProfile) {
         self.profile = profile
         _sex = State(initialValue: profile.sex)
-        _age = State(initialValue: profile.age)
+        _birthDate = State(initialValue: profile.birthDate ?? Calendar.current.date(byAdding: .year, value: -profile.age, to: .now) ?? .now)
         _heightCM = State(initialValue: profile.heightCM)
         _unit = State(initialValue: profile.weightUnit)
     }
@@ -95,13 +97,26 @@ struct BodySettingsView: View {
                 Picker("生理性别", selection: $sex) {
                     ForEach(BiologicalSex.allCases) { Text($0.rawValue).tag($0) }
                 }
-                Stepper("年龄：\(age) 岁", value: $age, in: 16...90)
-                HStack {
-                    Text("身高")
-                    Spacer()
-                    TextField("身高", value: $heightCM, format: .number.precision(.fractionLength(0...1)))
-                        .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 100)
-                    Text("cm").foregroundStyle(.secondary)
+                Button { showingBirthPicker = true } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("出生年月").foregroundStyle(AppTheme.textPrimary)
+                            Text("自动计算 \(HealthCalculator.age(from: birthDate)) 岁")
+                                .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                        }
+                        Spacer()
+                        Text(birthDate.formatted(.dateTime.year().month()))
+                            .foregroundStyle(AppTheme.deepGreen)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(AppTheme.green)
+                    }
+                }
+                Button { showingHeightPicker = true } label: {
+                    HStack {
+                        Text("身高").foregroundStyle(AppTheme.textPrimary)
+                        Spacer()
+                        Text("\(Int(heightCM.rounded())) cm").foregroundStyle(AppTheme.deepGreen)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(AppTheme.green)
+                    }
                 }
                 Picker("体重显示单位", selection: $unit) {
                     ForEach(WeightUnit.allCases) { Text($0.rawValue).tag($0) }
@@ -118,11 +133,22 @@ struct BodySettingsView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) { Button("保存") { save() }.fontWeight(.semibold) }
         }
+        .sheet(isPresented: $showingBirthPicker) {
+            BirthMonthPickerSheet(initialDate: birthDate) { birthDate = $0 }
+                .presentationDetents([.height(430)])
+        }
+        .sheet(isPresented: $showingHeightPicker) {
+            MeasurementPickerSheet(title: "选择身高", subtitle: "上下滚动到你的身高", symbol: "ruler", initialValue: heightCM, range: 120...220, step: 1, unit: "cm") {
+                heightCM = $0
+            }
+            .presentationDetents([.height(430)])
+        }
     }
 
     private func save() {
         profile.sex = sex
-        profile.age = age
+        profile.birthDate = birthDate
+        profile.age = HealthCalculator.age(from: birthDate)
         profile.heightCM = heightCM
         profile.weightUnit = unit
         PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts, budgets: budgets)
@@ -170,7 +196,7 @@ struct ActivitySettingsView: View {
                     Button { editingWorkout = workout } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(workout.type).foregroundStyle(.primary)
+                                Text(workout.type).foregroundStyle(AppTheme.textPrimary)
                                 Text("每周 \(workout.sessionsPerWeek.cleanString) 次 · \(workout.durationMinutes) 分钟")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
@@ -183,6 +209,10 @@ struct ActivitySettingsView: View {
                     }
                 }
                 Button { showingNewWorkout = true } label: { Label("添加固定运动", systemImage: "plus") }
+                if !workouts.isEmpty {
+                    LabeledContent("固定运动周总量", value: "\(Int(weeklyWorkoutEnergy.rounded())) kcal")
+                    LabeledContent("计入每日平均", value: "+\(Int((weeklyWorkoutEnergy / 7).rounded())) kcal")
+                }
             } header: {
                 Text("固定运动")
             } footer: {
@@ -226,6 +256,10 @@ struct ActivitySettingsView: View {
         WorkoutDraft(id: workout.id, type: workout.type, intensity: workout.intensity, durationMinutes: workout.durationMinutes, sessionsPerWeek: workout.sessionsPerWeek, met: workout.met, includedInSteps: workout.includedInSteps)
     }
 
+    private var weeklyWorkoutEnergy: Double {
+        HealthCalculator.weeklyWorkoutEnergy(weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts)
+    }
+
     private func saveAndRecalculate(dismissView: Bool = true) {
         profile.averageSteps = averageSteps
         PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts, budgets: budgets)
@@ -242,24 +276,31 @@ struct GoalSettingsView: View {
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
     let profile: UserProfile
-    @State private var targetDisplay: Double
+    @State private var targetKG: Double
     @State private var pace: GoalPace
+    @State private var showingTargetPicker = false
 
     init(profile: UserProfile) {
         self.profile = profile
-        _targetDisplay = State(initialValue: profile.weightUnit.displayValue(fromKilograms: profile.targetWeightKG))
+        let range = HealthCalculator.healthyStageRange(weightKG: profile.initialWeightKG)
+        _targetKG = State(initialValue: range.contains(profile.targetWeightKG) ? profile.targetWeightKG : HealthCalculator.healthyStageTarget(weightKG: profile.initialWeightKG))
         _pace = State(initialValue: profile.pace)
     }
 
     var body: some View {
         Form {
             Section("目标") {
-                HStack {
-                    Text("目标体重")
-                    Spacer()
-                    TextField("目标", value: $targetDisplay, format: .number.precision(.fractionLength(1)))
-                        .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 100)
-                    Text(profile.weightUnit.rawValue).foregroundStyle(.secondary)
+                Button { showingTargetPicker = true } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("阶段目标").foregroundStyle(AppTheme.textPrimary)
+                            Text("先完成当前体重的 5% 左右").font(.caption).foregroundStyle(AppTheme.secondaryText)
+                        }
+                        Spacer()
+                        Text("\(profile.weightUnit.displayValue(fromKilograms: targetKG).formatted(.number.precision(.fractionLength(1)))) \(profile.weightUnit.rawValue)")
+                            .foregroundStyle(AppTheme.deepGreen)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(AppTheme.green)
+                    }
                 }
                 Picker("减脂速度", selection: $pace) {
                     ForEach(GoalPace.allCases) { Text($0.rawValue).tag($0) }
@@ -274,7 +315,7 @@ struct GoalSettingsView: View {
                     }
                 }
             } footer: {
-                Text("保存后会更新今天和未来未锁定日期，不改动过去。")
+                Text("阶段目标限制在当前体重下降 1%–10% 内。保存后会更新今天和未来未锁定日期，不改动过去。")
             }
         }
         .appScreenBackground()
@@ -283,14 +324,36 @@ struct GoalSettingsView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) { Button("保存") { save() }.fontWeight(.semibold) }
         }
+        .sheet(isPresented: $showingTargetPicker) {
+            let range = HealthCalculator.healthyStageRange(weightKG: currentWeightKG)
+            let displayRange = profile.weightUnit.displayValue(fromKilograms: range.lowerBound)...profile.weightUnit.displayValue(fromKilograms: range.upperBound)
+            MeasurementPickerSheet(
+                title: "设置阶段目标",
+                subtitle: "本阶段可选择当前体重下降 1%–10%",
+                symbol: "target",
+                initialValue: profile.weightUnit.displayValue(fromKilograms: targetKG),
+                range: displayRange,
+                step: profile.weightUnit == .kg ? 0.1 : 0.2,
+                unit: profile.weightUnit.rawValue
+            ) { targetKG = profile.weightUnit.kilograms(fromDisplayValue: $0) }
+            .presentationDetents([.height(430)])
+        }
+        .onAppear {
+            let range = HealthCalculator.healthyStageRange(weightKG: currentWeightKG)
+            if !range.contains(targetKG) { targetKG = HealthCalculator.healthyStageTarget(weightKG: currentWeightKG) }
+        }
     }
 
     private func save() {
-        profile.targetWeightKG = profile.weightUnit.kilograms(fromDisplayValue: targetDisplay)
+        profile.targetWeightKG = targetKG
         profile.pace = pace
         PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts, budgets: budgets)
         try? modelContext.save()
         dismiss()
+    }
+
+    private var currentWeightKG: Double {
+        weights.first?.weightKG ?? profile.initialWeightKG
     }
 }
 
@@ -317,7 +380,7 @@ struct FoodLibraryView: View {
                     Button { editingPreset = preset } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(preset.name).foregroundStyle(.primary)
+                                Text(preset.name).foregroundStyle(AppTheme.textPrimary)
                                 Text("\(preset.baseQuantity.cleanString) \(preset.unit.rawValue) · \(Int(preset.calories)) kcal")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
@@ -353,7 +416,7 @@ struct CalculationExplanationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                explanationCard("1", "静息消耗", "根据生理性别、年龄、身高和近期体重估算身体在静息状态下的能量需求。")
+                explanationCard("1", "静息消耗", "根据生理性别、出生年月、身高和近期体重估算身体在静息状态下的能量需求。")
                 explanationCard("2", "活动消耗基准", "平均步数与固定运动转成长期日均消耗。只需在生活状态明显变化时调整。")
                 explanationCard("3", "从记录中校准", "当已有记录足以观察方向时，系统会温和地结合平均摄入和体重方向修正消耗；不会因单日体重波动骤然改计划。")
                 Text("天天健康提供生活方式管理参考，不替代医疗诊断或营养治疗。如有疾病、孕期或饮食障碍史，请先咨询专业人士。")

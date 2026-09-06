@@ -1,11 +1,16 @@
 import SwiftUI
 
 enum AppTheme {
-    static let green = Color(red: 32 / 255, green: 168 / 255, blue: 102 / 255)
-    static let deepGreen = Color(red: 18 / 255, green: 107 / 255, blue: 69 / 255)
-    static let orange = Color(red: 255 / 255, green: 138 / 255, blue: 52 / 255)
-    static let background = Color(red: 244 / 255, green: 247 / 255, blue: 244 / 255)
-    static let secondaryText = Color.primary.opacity(0.58)
+    static let green = Color(red: 24 / 255, green: 163 / 255, blue: 104 / 255)
+    static let deepGreen = Color(red: 16 / 255, green: 101 / 255, blue: 68 / 255)
+    static let orange = Color(red: 239 / 255, green: 126 / 255, blue: 51 / 255)
+    static let background = Color(red: 247 / 255, green: 249 / 255, blue: 246 / 255)
+    static let surface = Color.white
+    static let softSurface = Color(red: 239 / 255, green: 246 / 255, blue: 241 / 255)
+    static let warmSurface = Color(red: 255 / 255, green: 246 / 255, blue: 237 / 255)
+    static let textPrimary = Color(red: 28 / 255, green: 36 / 255, blue: 32 / 255)
+    static let secondaryText = Color(red: 93 / 255, green: 105 / 255, blue: 99 / 255)
+    static let divider = Color(red: 222 / 255, green: 230 / 255, blue: 225 / 255)
 }
 
 struct HealthCard<Content: View>: View {
@@ -15,12 +20,13 @@ struct HealthCard<Content: View>: View {
         content
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.background, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .foregroundStyle(AppTheme.textPrimary)
+            .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.primary.opacity(0.045), lineWidth: 1)
+                    .stroke(AppTheme.divider.opacity(0.8), lineWidth: 1)
             }
-            .shadow(color: Color.black.opacity(0.035), radius: 14, y: 5)
+            .shadow(color: AppTheme.deepGreen.opacity(0.055), radius: 16, y: 6)
     }
 }
 
@@ -33,7 +39,7 @@ struct BrandButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 15)
             .foregroundStyle(isSecondary ? AppTheme.deepGreen : Color.white)
-            .background(isSecondary ? AppTheme.green.opacity(0.12) : AppTheme.green)
+            .background(isSecondary ? AppTheme.softSurface : AppTheme.green)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .opacity(configuration.isPressed ? 0.88 : 1)
@@ -61,13 +67,14 @@ struct RingProgressView: View {
             VStack(spacing: 4) {
                 Text("今日已摄入")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.secondaryText)
                 Text("\(Int(consumed))")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppTheme.textPrimary)
                     .contentTransition(.numericText())
                 Text("/ \(Int(target)) kcal")
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.secondaryText)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -78,6 +85,7 @@ struct RingProgressView: View {
 extension View {
     func appScreenBackground() -> some View {
         scrollContentBackground(.hidden)
+            .foregroundStyle(AppTheme.textPrimary)
             .background(AppTheme.background.ignoresSafeArea())
     }
 }
