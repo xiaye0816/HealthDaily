@@ -93,7 +93,6 @@ struct BrandSplashView: View {
     var body: some View {
         ZStack {
             AppTheme.background
-                .ignoresSafeArea()
 
             Image("SplashLockup")
                 .resizable()
@@ -102,6 +101,7 @@ struct BrandSplashView: View {
                 .frame(width: 260, height: 174)
             .offset(y: -20)
         }
+        .ignoresSafeArea()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("天天健康，让每一份努力都有反馈")
         .accessibilityIdentifier("brand-splash")
