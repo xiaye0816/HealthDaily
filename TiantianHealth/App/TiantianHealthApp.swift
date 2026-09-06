@@ -41,6 +41,7 @@ struct RootView: View {
     @AppStorage("didNormalizeStageGoalV2") private var didNormalizeStageGoalV2 = false
     @Query private var profiles: [UserProfile]
     @State private var isShowingSplash = true
+    @State private var splashOpacity = 1.0
 
     var body: some View {
         ZStack {
@@ -59,7 +60,7 @@ struct RootView: View {
 
             if isShowingSplash {
                 BrandSplashView()
-                    .transition(.opacity)
+                    .opacity(splashOpacity)
                     .zIndex(1)
             }
         }
@@ -67,11 +68,14 @@ struct RootView: View {
         .preferredColorScheme(.light)
         .task {
             guard isShowingSplash else { return }
-            try? await Task.sleep(for: .milliseconds(800))
+            try? await Task.sleep(for: .milliseconds(900))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
-                isShowingSplash = false
+            withAnimation(.linear(duration: 0.1)) {
+                splashOpacity = 0
             }
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            isShowingSplash = false
         }
         .task(id: profiles.first?.id) {
             guard !didNormalizeStageGoalV2, let profile = profiles.first else { return }
@@ -91,29 +95,15 @@ struct BrandSplashView: View {
             AppTheme.background
                 .ignoresSafeArea()
 
-            VStack(spacing: 20) {
-                Image("SplashLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 96, height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-
-                VStack(spacing: 7) {
-                    Text("天天健康")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(AppTheme.deepGreen)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Text("让每一份努力都有反馈")
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .frame(width: 260)
-            }
+            Image("SplashLockup")
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 260, height: 174)
             .offset(y: -20)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("天天健康，让每一份努力都有反馈")
         .accessibilityIdentifier("brand-splash")
     }
 }

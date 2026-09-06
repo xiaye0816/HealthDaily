@@ -24,6 +24,7 @@
 		A1000000000000000000000F /* TiantianHealthUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* TiantianHealthUITests.swift */; };
 		A10000000000000000000010 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* PrivacyInfo.xcprivacy */; };
 		A10000000000000000000011 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* LaunchScreen.storyboard */; };
+		A10000000000000000000012 /* LaunchSplashLockup.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* LaunchSplashLockup.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +65,7 @@
 		A20000000000000000000012 /* TiantianHealthUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TiantianHealthUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000013 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A20000000000000000000014 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A20000000000000000000015 /* LaunchSplashLockup.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LaunchSplashLockup.png; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,6 +95,7 @@
 				A70000000000000000000007 /* Views */,
 				A2000000000000000000000D /* Assets.xcassets */,
 				A20000000000000000000014 /* LaunchScreen.storyboard */,
+				A20000000000000000000015 /* LaunchSplashLockup.png */,
 				A20000000000000000000013 /* PrivacyInfo.xcprivacy */,
 			);
 			path = TiantianHealth;
@@ -185,7 +188,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		AA0000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000D /* Assets.xcassets in Resources */, A10000000000000000000010 /* PrivacyInfo.xcprivacy in Resources */, A10000000000000000000011 /* LaunchScreen.storyboard in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		AA0000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000D /* Assets.xcassets in Resources */, A10000000000000000000010 /* PrivacyInfo.xcprivacy in Resources */, A10000000000000000000011 /* LaunchScreen.storyboard in Resources */, A10000000000000000000012 /* LaunchSplashLockup.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
