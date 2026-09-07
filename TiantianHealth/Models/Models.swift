@@ -230,6 +230,23 @@ final class FoodLogEntry {
 }
 
 @Model
+final class ExerciseLogEntry {
+    var id: UUID
+    var date: Date
+    var type: String
+    var calories: Double
+    var createdAt: Date
+
+    init(date: Date, type: String, calories: Double) {
+        id = UUID()
+        self.date = Calendar.current.startOfDay(for: date)
+        self.type = type
+        self.calories = calories
+        createdAt = .now
+    }
+}
+
+@Model
 final class DailyBudget {
     var id: UUID
     var date: Date

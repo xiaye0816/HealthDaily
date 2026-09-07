@@ -45,6 +45,58 @@ struct BrandSheetHeader: View {
     }
 }
 
+struct BrandModalScaffold<Content: View, Footer: View>: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    let onClose: () -> Void
+    @ViewBuilder let content: Content
+    @ViewBuilder let footer: Footer
+
+    init(
+        title: String,
+        subtitle: String,
+        symbol: String,
+        onClose: @escaping () -> Void,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder footer: () -> Footer
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.symbol = symbol
+        self.onClose = onClose
+        self.content = content()
+        self.footer = footer()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            BrandSheetHeader(title: title, subtitle: subtitle, symbol: symbol, onClose: onClose)
+            ScrollView {
+                VStack(spacing: 16) {
+                    content
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            footer
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+                .background(AppTheme.surface)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(AppTheme.divider).frame(height: 1)
+                }
+        }
+        .background(AppTheme.background.ignoresSafeArea())
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(30)
+    }
+}
+
 struct BrandSection<Content: View>: View {
     let title: String?
     @ViewBuilder let content: Content
@@ -297,12 +349,24 @@ struct WeightEntrySheet: View {
     private var kilograms: Double { unit.kilograms(fromDisplayValue: displayWeight) }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 22) {
-                HealthCard {
+        BrandModalScaffold(
+            title: "记录体重",
+            subtitle: "建议在相近时间和状态下测量",
+            symbol: "scalemass.fill"
+        ) {
+            dismiss()
+        } content: {
+            BrandSection("记录日期") {
+                HStack {
+                    Text("日期")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
                     DatePicker("记录日期", selection: $date, in: ...Date.now, displayedComponents: .date)
                         .datePickerStyle(.compact)
+                        .labelsHidden()
                 }
+            }
+            BrandSection {
                 VStack(spacing: 14) {
                     Text("体重")
                         .font(.subheadline)
@@ -331,25 +395,20 @@ struct WeightEntrySheet: View {
                             .font(.footnote).foregroundStyle(AppTheme.secondaryText)
                     }
                 }
-                .padding(.vertical, 28)
+                .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
                 .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                Spacer()
-                Button("保存体重") {
-                    onSave(DateTools.day(date), kilograms)
-                    saveTrigger.toggle()
-                    dismiss()
-                }
-                .buttonStyle(BrandButtonStyle())
-                .disabled(kilograms < 25 || kilograms > 350)
             }
-            .padding(22)
-            .background(AppTheme.background.ignoresSafeArea())
-            .navigationTitle("记录体重")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
-            .sensoryFeedback(.success, trigger: saveTrigger)
+        } footer: {
+            Button("保存体重") {
+                onSave(DateTools.day(date), kilograms)
+                saveTrigger.toggle()
+                dismiss()
+            }
+            .buttonStyle(BrandButtonStyle())
+            .disabled(kilograms < 25 || kilograms > 350)
         }
+        .sensoryFeedback(.success, trigger: saveTrigger)
     }
 
     private func adjustButton(systemName: String, action: @escaping () -> Void) -> some View {

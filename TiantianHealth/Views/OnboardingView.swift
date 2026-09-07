@@ -17,8 +17,6 @@ struct OnboardingView: View {
     @State private var weightUnit: WeightUnit = .kg
     @State private var currentWeightKG = 65.0
     @State private var averageSteps = 5_000
-    @State private var workouts: [WorkoutDraft] = []
-    @State private var editingWorkout: WorkoutDraft?
     @State private var targetWeightKG = HealthCalculator.healthyStageTarget(weightKG: 65)
     @State private var didCustomizeTarget = false
     @State private var pace: GoalPace = .gentle
@@ -33,9 +31,7 @@ struct OnboardingView: View {
         HealthCalculator.restingEnergy(sex: sex, age: age, heightCM: heightCM, weightKG: currentWeightKG)
     }
     private var stepEnergy: Double { HealthCalculator.stepEnergy(restingEnergy: resting, averageSteps: averageSteps) }
-    private var workoutEnergy: Double { HealthCalculator.dailyWorkoutEnergy(weightKG: currentWeightKG, workouts: workouts) }
-    private var weeklyWorkoutEnergy: Double { HealthCalculator.weeklyWorkoutEnergy(weightKG: currentWeightKG, workouts: workouts) }
-    private var tdee: Double { resting + stepEnergy + workoutEnergy }
+    private var tdee: Double { resting + stepEnergy }
     private var targetCalories: Double {
         HealthCalculator.dailyCalorieTarget(tdee: tdee, weightKG: currentWeightKG, pace: pace, sex: sex)
     }
@@ -60,16 +56,6 @@ struct OnboardingView: View {
                 footer
             }
             .background(AppTheme.background.ignoresSafeArea())
-            .sheet(item: $editingWorkout) { draft in
-                WorkoutEditorView(initial: draft) { updated in
-                    if let index = workouts.firstIndex(where: { $0.id == updated.id }) {
-                        workouts[index] = updated
-                    } else {
-                        workouts.append(updated)
-                    }
-                }
-                .presentationDetents([.large])
-            }
             .sheet(item: $activePicker) { picker in
                 pickerSheet(for: picker)
             }
@@ -170,7 +156,7 @@ struct OnboardingView: View {
     private var activityStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                stepTitle("设置活动消耗基准", subtitle: "设置一次即可持续复用；生活状态改变时再去设置里调整。")
+                stepTitle("设置日常活动基准", subtitle: "只需要选择平时的平均步数；实际运动发生后再单独记录。")
                 HealthCard {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
@@ -193,77 +179,7 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                     }
                 }
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("固定运动").font(.headline)
-                        Spacer()
-                        Button {
-                            editingWorkout = WorkoutDraft()
-                        } label: {
-                            Label("添加", systemImage: "plus")
-                        }
-                        .font(.subheadline.bold())
-                    }
-                    if workouts.isEmpty {
-                        Button {
-                            editingWorkout = WorkoutDraft()
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "figure.run")
-                                    .font(.title2)
-                                    .foregroundStyle(AppTheme.orange)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("没有固定运动也没关系").foregroundStyle(AppTheme.textPrimary)
-                                    Text("如果每周规律运动，可添加进消耗基准").font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                            }
-                            .padding(16)
-                            .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        ForEach(workouts) { workout in
-                            Button {
-                                editingWorkout = workout
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(workout.type).font(.headline).foregroundStyle(AppTheme.textPrimary)
-                                        Text("每周 \(workout.sessionsPerWeek.cleanString) 次 · \(workout.durationMinutes) 分钟 · \(workout.intensity)")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                }
-                                .padding(16)
-                                .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                if !workouts.isEmpty {
-                    HealthCard {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("固定运动周消耗").font(.subheadline).foregroundStyle(AppTheme.secondaryText)
-                                Text("\(Int(weeklyWorkoutEnergy.rounded())) kcal / 周")
-                                    .font(.title2.bold().monospacedDigit())
-                            }
-                            Spacer()
-                            Text("计入日均\n+\(Int(workoutEnergy.rounded())) kcal")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(AppTheme.deepGreen)
-                                .multilineTextAlignment(.trailing)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
-                        }
-                    }
-                }
-                infoBanner("活动消耗是长期平均值，不需要每天确认是否完成运动。")
+                infoBanner("步数用于估算日常活动。游泳、跑步或力量训练等实际运动，在首页发生后记录即可。")
             }
             .padding(22)
         }
@@ -317,8 +233,9 @@ struct OnboardingView: View {
                         Divider()
                         metricRow("静息消耗", value: resting)
                         metricRow("日常步数", value: stepEnergy)
-                        metricRow("固定运动 · 周总", value: weeklyWorkoutEnergy)
-                        metricRow("固定运动 · 计入日均", value: workoutEnergy)
+                        Text("实际运动不预先摊入每天，记录后会增加运动当天的可用额度。")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
                     }
                 }
                 HealthCard {
@@ -395,9 +312,6 @@ struct OnboardingView: View {
             baselineTDEE: tdee
         )
         modelContext.insert(profile)
-        workouts.forEach {
-            modelContext.insert(WorkoutBaseline(type: $0.type, intensity: $0.intensity, durationMinutes: $0.durationMinutes, sessionsPerWeek: $0.sessionsPerWeek, met: $0.met, includedInSteps: $0.includedInSteps))
-        }
         modelContext.insert(WeightEntry(date: .now, weightKG: currentWeightKG))
         DateTools.weekDays(containing: .now).forEach {
             modelContext.insert(DailyBudget(date: $0, targetCalories: targetCalories))
@@ -505,12 +419,12 @@ struct OnboardingView: View {
         switch picker {
         case .birthMonth:
             BirthMonthPickerSheet(initialDate: birthDate) { birthDate = $0 }
-                .presentationDetents([.height(430)])
+                .presentationDetents([.large])
         case .height:
             MeasurementPickerSheet(title: "选择身高", subtitle: "上下滚动到你的身高", symbol: "ruler", initialValue: heightCM, range: 120...220, step: 1, unit: "cm") {
                 heightCM = $0
             }
-            .presentationDetents([.height(430)])
+            .presentationDetents([.large])
         case .currentWeight:
             MeasurementPickerSheet(
                 title: "选择当前体重",
@@ -526,7 +440,7 @@ struct OnboardingView: View {
                     targetWeightKG = HealthCalculator.healthyStageTarget(weightKG: currentWeightKG)
                 }
             }
-            .presentationDetents([.height(430)])
+            .presentationDetents([.large])
         case .targetWeight:
             let displayRange = weightUnit.displayValue(fromKilograms: stageRangeKG.lowerBound)...weightUnit.displayValue(fromKilograms: stageRangeKG.upperBound)
             MeasurementPickerSheet(
@@ -541,143 +455,7 @@ struct OnboardingView: View {
                 targetWeightKG = weightUnit.kilograms(fromDisplayValue: displayValue)
                 didCustomizeTarget = true
             }
-            .presentationDetents([.height(430)])
+            .presentationDetents([.large])
         }
-    }
-}
-
-struct WorkoutEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var draft: WorkoutDraft
-    let onSave: (WorkoutDraft) -> Void
-
-    private let types = ["快走", "跑步", "骑行", "游泳", "力量训练", "球类", "其他"]
-    private let intensities = ["轻松", "中等", "较高"]
-
-    init(initial: WorkoutDraft, onSave: @escaping (WorkoutDraft) -> Void) {
-        _draft = State(initialValue: initial)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            BrandSheetHeader(title: "固定运动", subtitle: "设置一次，作为长期活动消耗基准", symbol: "figure.run") { dismiss() }
-            ScrollView {
-                VStack(spacing: 16) {
-                    BrandSection("运动类型") {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 9)], spacing: 9) {
-                            ForEach(types, id: \.self) { type in
-                                optionChip(type, isSelected: draft.type == type) {
-                                    withAnimation(.snappy) { draft.type = type }
-                                    updateMET()
-                                }
-                            }
-                        }
-                    }
-                    BrandSection("运动强度") {
-                        HStack(spacing: 9) {
-                            ForEach(intensities, id: \.self) { intensity in
-                                optionChip(intensity, isSelected: draft.intensity == intensity) {
-                                    withAnimation(.snappy) { draft.intensity = intensity }
-                                    updateMET()
-                                }
-                            }
-                        }
-                    }
-                    BrandSection("平均安排") {
-                        adjustmentRow("每次时长", value: "\(draft.durationMinutes) 分钟") {
-                            draft.durationMinutes = max(10, draft.durationMinutes - 5)
-                        } onIncrease: {
-                            draft.durationMinutes = min(180, draft.durationMinutes + 5)
-                        }
-                        Divider().overlay(AppTheme.divider)
-                        adjustmentRow("每周频率", value: "\(draft.sessionsPerWeek.cleanString) 次") {
-                            draft.sessionsPerWeek = max(0.5, draft.sessionsPerWeek - 0.5)
-                        } onIncrease: {
-                            draft.sessionsPerWeek = min(7, draft.sessionsPerWeek + 0.5)
-                        }
-                    }
-                    BrandSection {
-                        Toggle(isOn: $draft.includedInSteps) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("已包含在日均步数中").font(.subheadline.weight(.semibold))
-                                Text("步行、跑步已完整计入步数时打开，避免重复计算。")
-                                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
-                            }
-                        }
-                        .tint(AppTheme.green)
-                    }
-                }
-                .padding(20)
-            }
-            Button("保存固定运动") {
-                updateMET()
-                onSave(draft)
-                dismiss()
-            }
-            .buttonStyle(BrandButtonStyle())
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(AppTheme.surface)
-            .overlay(alignment: .top) { Rectangle().fill(AppTheme.divider).frame(height: 1) }
-        }
-        .background(AppTheme.background.ignoresSafeArea())
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(30)
-    }
-
-    private func optionChip(_ label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(isSelected ? Color.white : AppTheme.textPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 11)
-                .background(isSelected ? AppTheme.green : AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func adjustmentRow(_ title: String, value: String, onDecrease: @escaping () -> Void, onIncrease: @escaping () -> Void) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(value).font(.caption.monospacedDigit()).foregroundStyle(AppTheme.secondaryText)
-            }
-            Spacer()
-            HStack(spacing: 10) {
-                roundButton("minus", action: onDecrease)
-                Text(value.components(separatedBy: " ").first ?? value)
-                    .font(.headline.monospacedDigit())
-                    .frame(minWidth: 38)
-                roundButton("plus", action: onIncrease)
-            }
-        }
-    }
-
-    private func roundButton(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.caption.bold())
-                .foregroundStyle(AppTheme.deepGreen)
-                .frame(width: 36, height: 36)
-                .background(AppTheme.softSurface, in: Circle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func updateMET() {
-        let base: Double
-        switch draft.type {
-        case "跑步": base = 8.0
-        case "骑行": base = 6.8
-        case "游泳": base = 6.0
-        case "力量训练": base = 5.0
-        case "球类": base = 7.0
-        case "快走": base = 4.3
-        default: base = 5.0
-        }
-        let multiplier = draft.intensity == "轻松" ? 0.8 : (draft.intensity == "较高" ? 1.25 : 1)
-        draft.met = base * multiplier
     }
 }

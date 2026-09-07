@@ -76,7 +76,7 @@ struct FoodPickerView: View {
         }
         .sheet(isPresented: $showingQuickCalories) {
             QuickCaloriesView(meal: meal, date: date) { dismiss() }
-                .presentationDetents([.height(520)])
+                .presentationDetents([.large])
         }
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(30)
@@ -116,7 +116,7 @@ struct FoodPickerView: View {
             .buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 3) {
                 Text(preset.name).font(.body.weight(.semibold))
-                Text("\(preset.baseQuantity.cleanString) \(preset.unit.rawValue) · \(Int(preset.calories)) kcal")
+                Text(presetDescription(preset))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -149,6 +149,13 @@ struct FoodPickerView: View {
                 .background(AppTheme.green.opacity(0.11), in: Circle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func presetDescription(_ preset: FoodPreset) -> String {
+        if abs(preset.baseQuantity - 1) < 0.001 {
+            return "每\(preset.unit.rawValue) · \(Int(preset.calories.rounded())) kcal"
+        }
+        return "每 \(preset.baseQuantity.cleanString) \(preset.unit.rawValue) · \(Int(preset.calories.rounded())) kcal"
     }
 
     private var selectionTray: some View {
@@ -203,94 +210,90 @@ struct FoodPresetEditorView: View {
     let onSaved: ((FoodPreset, Int) -> Void)?
 
     @State private var name: String
-    @State private var quantity: Double
     @State private var unit: FoodUnit
-    @State private var calories: Double
+    @State private var caloriesText: String
 
     init(mode: FoodEditorMode, onSaved: ((FoodPreset, Int) -> Void)? = nil) {
         self.mode = mode
         self.onSaved = onSaved
         if case let .edit(preset) = mode {
             _name = State(initialValue: preset.name)
-            _quantity = State(initialValue: preset.baseQuantity)
             _unit = State(initialValue: preset.unit)
-            _calories = State(initialValue: preset.calories)
+            _caloriesText = State(initialValue: preset.calories.cleanString)
         } else {
             _name = State(initialValue: "")
-            _quantity = State(initialValue: 100)
-            _unit = State(initialValue: .gram)
-            _calories = State(initialValue: 0)
+            _unit = State(initialValue: .serving)
+            _caloriesText = State(initialValue: "")
         }
     }
 
+    private var calories: Double {
+        Double(caloriesText.replacingOccurrences(of: ",", with: ".")) ?? 0
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            BrandSheetHeader(title: title, subtitle: "保存到个人食材库，下次可以直接选", symbol: "fork.knife") { dismiss() }
-            ScrollView {
-                VStack(spacing: 16) {
-                    BrandSection("食物名称") {
-                        TextField("名称，例如：煎鸡胸", text: $name)
-                            .padding(14)
-                            .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
-                    }
-                    BrandSection("基准份量") {
-                        HStack(spacing: 10) {
-                            TextField("基准份量", value: $quantity, format: .number.precision(.fractionLength(0...1)))
-                                .keyboardType(.decimalPad)
-                                .font(.title3.bold().monospacedDigit())
-                                .padding(14)
-                                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
-                            Text(unit.rawValue)
-                                .font(.headline)
-                                .foregroundStyle(AppTheme.deepGreen)
-                                .frame(width: 50)
-                        }
-                        HStack(spacing: 8) {
-                            ForEach(FoodUnit.allCases) { option in
-                                Button {
-                                    withAnimation(.snappy) { unit = option }
-                                } label: {
-                                    Text(option.rawValue)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(unit == option ? Color.white : AppTheme.textPrimary)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .background(unit == option ? AppTheme.green : AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 11))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    BrandSection("这份食物的热量") {
-                        HStack {
-                            Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
-                            TextField("这份食物的热量", value: $calories, format: .number.precision(.fractionLength(0...1)))
-                                .keyboardType(.decimalPad)
-                                .font(.title2.bold().monospacedDigit())
-                            Text("kcal").foregroundStyle(AppTheme.secondaryText)
-                        }
-                        .padding(14)
-                        .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 13))
-                    }
-                    Label("以后修改预设，不会改变过去已经保存的饮食记录。", systemImage: "checkmark.shield.fill")
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.deepGreen)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
-                }
-                .padding(20)
+        BrandModalScaffold(title: title, subtitle: "保存后，下次可以直接选择并调整数量", symbol: "fork.knife") {
+            dismiss()
+        } content: {
+            BrandSection("食物名称") {
+                TextField("名称，例如：煎鸡胸", text: $name)
+                    .padding(14)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
             }
+            BrandSection("单位") {
+                VStack(spacing: 12) {
+                    Text("默认按 1 \(unit.rawValue) 保存，实际记录时再调整数量。")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 8) {
+                        ForEach(FoodUnit.allCases) { option in
+                            Button {
+                                withAnimation(.snappy) { unit = option }
+                            } label: {
+                                Text(option.rawValue)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(unit == option ? Color.white : AppTheme.textPrimary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(unit == option ? AppTheme.green : AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 11))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            BrandSection(calorieSectionTitle) {
+                HStack {
+                    Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
+                    TextField("热量", text: $caloriesText)
+                        .keyboardType(.decimalPad)
+                        .font(.title2.bold().monospacedDigit())
+                        .accessibilityIdentifier("food-calories")
+                    Text("kcal").foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 13))
+            }
+            if let legacyBasisDescription {
+                Label(legacyBasisDescription, systemImage: "clock.arrow.circlepath")
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+            }
+            Label("修改预设不会改变过去已经保存的饮食记录。", systemImage: "checkmark.shield.fill")
+                .font(.footnote)
+                .foregroundStyle(AppTheme.deepGreen)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+        } footer: {
             Button(modeIsAdding ? "保存并选中" : "保存食物") { save() }
                 .buttonStyle(BrandButtonStyle())
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || quantity <= 0 || calories <= 0)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .background(AppTheme.surface)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || calories <= 0)
         }
-        .background(AppTheme.background.ignoresSafeArea())
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(30)
     }
 
     private var modeIsAdding: Bool {
@@ -303,16 +306,27 @@ struct FoodPresetEditorView: View {
         return "新建食物"
     }
 
+    private var legacyBasisDescription: String? {
+        guard case let .edit(preset) = mode, abs(preset.baseQuantity - 1) >= 0.001 else { return nil }
+        return "这是旧版本食物，继续按每 \(preset.baseQuantity.cleanString) \(unit.rawValue) 计算，原有数据不会被改写。"
+    }
+
+    private var calorieSectionTitle: String {
+        if case let .edit(preset) = mode, abs(preset.baseQuantity - 1) >= 0.001 {
+            return "每 \(preset.baseQuantity.cleanString) \(unit.rawValue)的热量"
+        }
+        return "每\(unit.rawValue)的热量"
+    }
+
     private func save() {
         let preset: FoodPreset
         if case let .edit(existing) = mode {
             existing.name = name.trimmingCharacters(in: .whitespaces)
-            existing.baseQuantity = quantity
             existing.unit = unit
             existing.calories = calories
             preset = existing
         } else {
-            preset = FoodPreset(name: name.trimmingCharacters(in: .whitespaces), baseQuantity: quantity, unit: unit, calories: calories)
+            preset = FoodPreset(name: name.trimmingCharacters(in: .whitespaces), baseQuantity: 1, unit: unit, calories: calories)
             modelContext.insert(preset)
         }
         try? modelContext.save()
@@ -329,52 +343,47 @@ struct QuickCaloriesView: View {
     let onComplete: () -> Void
 
     @State private var name = ""
-    @State private var calories: Double = 0
+    @State private var caloriesText = ""
     @State private var savePreset = false
 
+    private var calories: Double {
+        Double(caloriesText.replacingOccurrences(of: ",", with: ".")) ?? 0
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            BrandSheetHeader(title: "快速记录热量", subtitle: "不需要先建立食物，也能立即记一笔", symbol: "bolt.fill") { dismiss() }
-            ScrollView {
-                VStack(spacing: 16) {
-                    BrandSection("这次吃了多少") {
-                        TextField("名称（可选）", text: $name)
-                            .padding(14)
-                            .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
-                        HStack {
-                            Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
-                            TextField("热量", value: $calories, format: .number.precision(.fractionLength(0...1)))
-                                .keyboardType(.decimalPad)
-                                .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
-                            Text("kcal").foregroundStyle(AppTheme.secondaryText)
-                        }
-                        .padding(14)
-                        .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    BrandSection {
-                        Toggle(isOn: $savePreset) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("同时保存到我的食材库").font(.subheadline.weight(.semibold))
-                                Text("经常吃同样的东西时，下次可以一键录入。")
-                                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
-                            }
-                        }
-                        .tint(AppTheme.green)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        BrandModalScaffold(title: "快速记录热量", subtitle: "不需要先建立食物，也能立即记一笔", symbol: "bolt.fill") {
+            dismiss()
+        } content: {
+            BrandSection("这次吃了多少") {
+                TextField("名称（可选）", text: $name)
+                    .padding(14)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
+                HStack {
+                    Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
+                    TextField("热量", text: $caloriesText)
+                        .keyboardType(.decimalPad)
+                        .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
+                    Text("kcal").foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 14))
+            }
+            BrandSection {
+                Toggle(isOn: $savePreset) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("同时保存到我的食材库").font(.subheadline.weight(.semibold))
+                        Text("经常吃同样的东西时，下次可以一键录入。")
+                            .font(.caption).foregroundStyle(AppTheme.secondaryText)
                     }
                 }
-                .padding(20)
+                .tint(AppTheme.green)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
+        } footer: {
             Button("保存这笔热量") { save() }
                 .buttonStyle(BrandButtonStyle())
                 .disabled(calories <= 0)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .background(AppTheme.surface)
         }
-        .background(AppTheme.background.ignoresSafeArea())
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(30)
     }
 
     private func save() {

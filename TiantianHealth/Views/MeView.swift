@@ -3,14 +3,16 @@ import SwiftData
 
 struct MeView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var router: AppRouter
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("lastDismissedReviewWeek") private var lastDismissedReviewWeek = ""
-    @AppStorage("didNormalizeStageGoalV2") private var didNormalizeStageGoalV2 = false
+    @AppStorage("didMigrateActualExerciseV1") private var didMigrateActualExerciseV1 = false
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [WorkoutBaseline]
     @Query private var weights: [WeightEntry]
     @Query private var presets: [FoodPreset]
     @Query private var foodLogs: [FoodLogEntry]
+    @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var budgets: [DailyBudget]
     @State private var showingResetConfirmation = false
 
@@ -26,7 +28,7 @@ struct MeView: View {
                             }
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("天天健康").font(.title3.bold())
-                                Text("当前消耗约 \(Int(profile.calibratedTDEE)) kcal/天")
+                                Text("日常基础消耗约 \(Int(profile.calibratedTDEE)) kcal/天")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
@@ -39,7 +41,7 @@ struct MeView: View {
                             settingsLabel("身体资料", symbol: "person.text.rectangle", detail: "出生年月、身高、单位")
                         }
                         NavigationLink { ActivitySettingsView(profile: profile) } label: {
-                            settingsLabel("活动消耗基准", symbol: "figure.walk", detail: "\(profile.averageSteps.formatted()) 步/天")
+                            settingsLabel("日常活动基准", symbol: "figure.walk", detail: "\(profile.averageSteps.formatted()) 步/天")
                         }
                         NavigationLink { GoalSettingsView(profile: profile) } label: {
                             settingsLabel("减脂目标", symbol: "target", detail: profile.pace.rawValue)
@@ -49,6 +51,12 @@ struct MeView: View {
                         NavigationLink { FoodLibraryView() } label: {
                             settingsLabel("我的食材库", symbol: "fork.knife", detail: "\(presets.count) 项")
                         }
+                    }
+                    Section("工具") {
+                        NavigationLink { CalorieConverterView() } label: {
+                            settingsLabel("热量换算", symbol: "arrow.left.arrow.right", detail: "kcal ↔ kJ")
+                        }
+                        .accessibilityIdentifier("calorie-converter")
                     }
                     Section("数据管理") {
                         Button {
@@ -82,13 +90,14 @@ struct MeView: View {
             .navigationTitle("我的")
             .sheet(isPresented: $showingResetConfirmation) {
                 ResetDataConfirmationSheet(onConfirm: resetAllData)
-                    .presentationDetents([.height(570)])
+                    .presentationDetents([.large])
             }
         }
     }
 
     private func resetAllData() {
         foodLogs.forEach(modelContext.delete)
+        exerciseLogs.forEach(modelContext.delete)
         budgets.forEach(modelContext.delete)
         weights.forEach(modelContext.delete)
         workouts.forEach(modelContext.delete)
@@ -98,11 +107,13 @@ struct MeView: View {
         do {
             try modelContext.save()
             lastDismissedReviewWeek = ""
-            didNormalizeStageGoalV2 = false
+            didMigrateActualExerciseV1 = false
+            router.clearPendingShortcut()
             withAnimation(.easeInOut(duration: 0.3)) {
                 hasCompletedOnboarding = false
             }
         } catch {
+            modelContext.rollback()
             // Keep the current screen if local deletion fails so the user can retry safely.
         }
     }
@@ -113,9 +124,14 @@ struct MeView: View {
                 .frame(width: 30, height: 30)
                 .foregroundStyle(AppTheme.green)
                 .background(AppTheme.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
-            Text(title)
-            Spacer()
-            Text(detail).font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
         }
     }
 }
@@ -125,12 +141,13 @@ struct ResetDataConfirmationSheet: View {
     let onConfirm: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            BrandSheetHeader(
-                title: "确认重置数据",
-                subtitle: "这是不可撤销的操作",
-                symbol: "exclamationmark.triangle.fill"
-            ) { dismiss() }
+        BrandModalScaffold(
+            title: "确认重置数据",
+            subtitle: "这是不可撤销的操作",
+            symbol: "exclamationmark.triangle.fill"
+        ) {
+            dismiss()
+        } content: {
             VStack(spacing: 18) {
                 VStack(spacing: 12) {
                     Image(systemName: "arrow.counterclockwise.circle.fill")
@@ -147,34 +164,30 @@ struct ResetDataConfirmationSheet: View {
                 }
                 BrandSection("将被清除") {
                     resetItem("身体资料与减脂目标")
-                    resetItem("体重、热量和饮食记录")
-                    resetItem("个人食材库与运动基准")
+                    resetItem("体重、热量、饮食和运动记录")
+                    resetItem("个人食材库与日常活动基准")
                     resetItem("每周热量预算")
                 }
-                Spacer(minLength: 0)
-                VStack(spacing: 10) {
-                    Button {
-                        onConfirm()
-                        dismiss()
-                    } label: {
-                        Text("确认清除全部数据")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 15)
-                            .background(Color.red, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("confirm-reset-all-data")
-                    Button("取消，保留数据") { dismiss() }
-                        .buttonStyle(BrandButtonStyle(isSecondary: true))
-                }
             }
-            .padding(20)
+        } footer: {
+            VStack(spacing: 10) {
+                Button {
+                    onConfirm()
+                    dismiss()
+                } label: {
+                    Text("确认清除全部数据")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(Color.red, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("confirm-reset-all-data")
+                Button("取消，保留数据") { dismiss() }
+                    .buttonStyle(BrandButtonStyle(isSecondary: true))
+            }
         }
-        .background(AppTheme.background.ignoresSafeArea())
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(30)
     }
 
     private func resetItem(_ title: String) -> some View {
@@ -187,7 +200,6 @@ struct ResetDataConfirmationSheet: View {
 struct BodySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var workouts: [WorkoutBaseline]
     @Query private var budgets: [DailyBudget]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
@@ -251,13 +263,13 @@ struct BodySettingsView: View {
         }
         .sheet(isPresented: $showingBirthPicker) {
             BirthMonthPickerSheet(initialDate: birthDate) { birthDate = $0 }
-                .presentationDetents([.height(430)])
+                .presentationDetents([.large])
         }
         .sheet(isPresented: $showingHeightPicker) {
             MeasurementPickerSheet(title: "选择身高", subtitle: "上下滚动到你的身高", symbol: "ruler", initialValue: heightCM, range: 120...220, step: 1, unit: "cm") {
                 heightCM = $0
             }
-            .presentationDetents([.height(430)])
+            .presentationDetents([.large])
         }
     }
 
@@ -267,7 +279,7 @@ struct BodySettingsView: View {
         profile.age = HealthCalculator.age(from: birthDate)
         profile.heightCM = heightCM
         profile.weightUnit = unit
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts, budgets: budgets)
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, budgets: budgets)
         try? modelContext.save()
         dismiss()
     }
@@ -276,15 +288,11 @@ struct BodySettingsView: View {
 struct ActivitySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var workouts: [WorkoutBaseline]
     @Query private var budgets: [DailyBudget]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
     let profile: UserProfile
     @State private var averageSteps: Int
-    @State private var editingWorkout: WorkoutBaseline?
-    @State private var showingNewWorkout = false
-    @State private var deletingWorkout: WorkoutBaseline?
 
     init(profile: UserProfile) {
         self.profile = profile
@@ -293,7 +301,7 @@ struct ActivitySettingsView: View {
 
     var body: some View {
         Form {
-            Section("日常活动") {
+            Section {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Text("平均每日步数")
@@ -303,82 +311,23 @@ struct ActivitySettingsView: View {
                     Slider(value: Binding(get: { Double(averageSteps) }, set: { averageSteps = Int($0 / 500) * 500 }), in: 0...20_000, step: 500)
                 }
                 .padding(.vertical, 4)
-            }
-            Section {
-                if workouts.isEmpty {
-                    Text("暂无固定运动").foregroundStyle(.secondary)
-                }
-                ForEach(workouts) { workout in
-                    Button { editingWorkout = workout } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(workout.type).foregroundStyle(AppTheme.textPrimary)
-                                Text("每周 \(workout.sessionsPerWeek.cleanString) 次 · \(workout.durationMinutes) 分钟")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                        }
-                    }
-                    .swipeActions {
-                        Button("删除", role: .destructive) { deletingWorkout = workout }
-                    }
-                }
-                Button { showingNewWorkout = true } label: { Label("添加固定运动", systemImage: "plus") }
-                if !workouts.isEmpty {
-                    LabeledContent("固定运动周总量", value: "\(Int(weeklyWorkoutEnergy.rounded())) kcal")
-                    LabeledContent("计入每日平均", value: "+\(Int((weeklyWorkoutEnergy / 7).rounded())) kcal")
-                }
             } header: {
-                Text("固定运动")
+                Text("日常活动")
             } footer: {
-                Text("这是长期平均基准，不会要求你每周重复确认。")
+                Text("这里只设置平时的步数基准。实际运动请在首页发生后记录，运动消耗只增加当天额度。")
             }
         }
         .appScreenBackground()
-        .navigationTitle("活动消耗基准")
+        .navigationTitle("日常活动基准")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) { Button("保存") { saveAndRecalculate() }.fontWeight(.semibold) }
         }
-        .sheet(isPresented: $showingNewWorkout) {
-            WorkoutEditorView(initial: WorkoutDraft()) { draft in
-                modelContext.insert(WorkoutBaseline(type: draft.type, intensity: draft.intensity, durationMinutes: draft.durationMinutes, sessionsPerWeek: draft.sessionsPerWeek, met: draft.met, includedInSteps: draft.includedInSteps))
-                saveAndRecalculate(dismissView: false)
-            }
-        }
-        .sheet(item: $editingWorkout) { workout in
-            WorkoutEditorView(initial: draft(from: workout)) { draft in
-                workout.type = draft.type
-                workout.intensity = draft.intensity
-                workout.durationMinutes = draft.durationMinutes
-                workout.sessionsPerWeek = draft.sessionsPerWeek
-                workout.met = draft.met
-                workout.includedInSteps = draft.includedInSteps
-                saveAndRecalculate(dismissView: false)
-            }
-        }
-        .confirmationDialog("删除这项固定运动？", isPresented: Binding(get: { deletingWorkout != nil }, set: { if !$0 { deletingWorkout = nil } })) {
-            Button("删除", role: .destructive) {
-                if let deletingWorkout { modelContext.delete(deletingWorkout) }
-                self.deletingWorkout = nil
-                saveAndRecalculate(dismissView: false)
-            }
-            Button("取消", role: .cancel) { deletingWorkout = nil }
-        }
-    }
-
-    private func draft(from workout: WorkoutBaseline) -> WorkoutDraft {
-        WorkoutDraft(id: workout.id, type: workout.type, intensity: workout.intensity, durationMinutes: workout.durationMinutes, sessionsPerWeek: workout.sessionsPerWeek, met: workout.met, includedInSteps: workout.includedInSteps)
-    }
-
-    private var weeklyWorkoutEnergy: Double {
-        HealthCalculator.weeklyWorkoutEnergy(weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts)
     }
 
     private func saveAndRecalculate(dismissView: Bool = true) {
         profile.averageSteps = averageSteps
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts, budgets: budgets)
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, budgets: budgets)
         try? modelContext.save()
         if dismissView { dismiss() }
     }
@@ -387,7 +336,6 @@ struct ActivitySettingsView: View {
 struct GoalSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var workouts: [WorkoutBaseline]
     @Query private var budgets: [DailyBudget]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
@@ -452,7 +400,7 @@ struct GoalSettingsView: View {
                 step: profile.weightUnit == .kg ? 0.1 : 0.2,
                 unit: profile.weightUnit.rawValue
             ) { targetKG = profile.weightUnit.kilograms(fromDisplayValue: $0) }
-            .presentationDetents([.height(430)])
+            .presentationDetents([.large])
         }
         .onAppear {
             let range = HealthCalculator.healthyStageRange(weightKG: currentWeightKG)
@@ -463,13 +411,120 @@ struct GoalSettingsView: View {
     private func save() {
         profile.targetWeightKG = targetKG
         profile.pace = pace
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, workouts: workouts, budgets: budgets)
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, budgets: budgets)
         try? modelContext.save()
         dismiss()
     }
 
     private var currentWeightKG: Double {
         weights.first?.weightKG ?? profile.initialWeightKG
+    }
+}
+
+struct CalorieConverterView: View {
+    private enum InputUnit: String, CaseIterable, Identifiable {
+        case kilocalorie = "千卡 kcal"
+        case kilojoule = "千焦 kJ"
+
+        var id: String { rawValue }
+        var shortName: String { self == .kilocalorie ? "kcal" : "kJ" }
+        var resultName: String { self == .kilocalorie ? "kJ" : "kcal" }
+    }
+
+    @State private var inputUnit: InputUnit = .kilocalorie
+    @State private var inputText = ""
+    @FocusState private var isInputFocused: Bool
+
+    private var inputValue: Double {
+        Double(inputText.replacingOccurrences(of: ",", with: ".")) ?? 0
+    }
+
+    private var result: Double {
+        switch inputUnit {
+        case .kilocalorie: CalorieMath.kilojoules(fromKilocalories: inputValue)
+        case .kilojoule: CalorieMath.kilocalories(fromKilojoules: inputValue)
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                HealthCard {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("输入单位").font(.headline)
+                        Picker("输入单位", selection: $inputUnit) {
+                            ForEach(InputUnit.allCases) { unit in
+                                Text(unit.rawValue).tag(unit)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        HStack(alignment: .firstTextBaseline) {
+                            TextField("0", text: $inputText)
+                                .keyboardType(.decimalPad)
+                                .focused($isInputFocused)
+                                .font(.system(size: 38, weight: .bold, design: .rounded).monospacedDigit())
+                                .accessibilityIdentifier("calorie-converter-input")
+                            Text(inputUnit.shortName)
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                        .padding(16)
+                        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                }
+
+                Button {
+                    let previousResult = result
+                    inputUnit = inputUnit == .kilocalorie ? .kilojoule : .kilocalorie
+                    inputText = previousResult > 0 ? formatted(previousResult) : ""
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.deepGreen)
+                        .frame(width: 46, height: 46)
+                        .background(AppTheme.green.opacity(0.12), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("交换换算方向")
+
+                HealthCard {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("换算结果").font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(formatted(result))
+                                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(AppTheme.deepGreen)
+                                .minimumScaleFactor(0.65)
+                                .lineLimit(1)
+                                .contentTransition(.numericText())
+                            Text(inputUnit.resultName)
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Label("1 kcal = 4.184 kJ", systemImage: "function")
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.secondaryText)
+                Button("清空") {
+                    inputText = ""
+                    isInputFocused = true
+                }
+                .buttonStyle(BrandButtonStyle(isSecondary: true))
+            }
+            .padding(18)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(AppTheme.background)
+        .navigationTitle("热量换算")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func formatted(_ value: Double) -> String {
+        guard value.isFinite, value > 0 else { return "0" }
+        return value.formatted(.number.precision(.fractionLength(0...1)))
     }
 }
 
@@ -497,7 +552,7 @@ struct FoodLibraryView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(preset.name).foregroundStyle(AppTheme.textPrimary)
-                                Text("\(preset.baseQuantity.cleanString) \(preset.unit.rawValue) · \(Int(preset.calories)) kcal")
+                                Text(presetDescription(preset))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -514,8 +569,14 @@ struct FoodLibraryView: View {
         .navigationTitle("我的食材库")
         .searchable(text: $searchText, prompt: "搜索我的食材")
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { showingNewPreset = true } label: { Image(systemName: "plus") } } }
-        .sheet(isPresented: $showingNewPreset) { FoodPresetEditorView(mode: .libraryOnly) }
-        .sheet(item: $editingPreset) { preset in FoodPresetEditorView(mode: .edit(preset)) }
+        .sheet(isPresented: $showingNewPreset) {
+            FoodPresetEditorView(mode: .libraryOnly)
+                .presentationDetents([.large])
+        }
+        .sheet(item: $editingPreset) { preset in
+            FoodPresetEditorView(mode: .edit(preset))
+                .presentationDetents([.large])
+        }
         .confirmationDialog("删除“\(deletingPreset?.name ?? "")”？", isPresented: Binding(get: { deletingPreset != nil }, set: { if !$0 { deletingPreset = nil } }), titleVisibility: .visible) {
             Button("删除预设", role: .destructive) {
                 if let deletingPreset { modelContext.delete(deletingPreset); try? modelContext.save() }
@@ -526,6 +587,13 @@ struct FoodLibraryView: View {
             Text("过去已经记录的饮食不会受到影响。")
         }
     }
+
+    private func presetDescription(_ preset: FoodPreset) -> String {
+        if abs(preset.baseQuantity - 1) < 0.001 {
+            return "每\(preset.unit.rawValue) · \(Int(preset.calories.rounded())) kcal"
+        }
+        return "每 \(preset.baseQuantity.cleanString) \(preset.unit.rawValue) · \(Int(preset.calories.rounded())) kcal"
+    }
 }
 
 struct CalculationExplanationView: View {
@@ -533,8 +601,8 @@ struct CalculationExplanationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 explanationCard("1", "静息消耗", "根据生理性别、出生年月、身高和近期体重估算身体在静息状态下的能量需求。")
-                explanationCard("2", "活动消耗基准", "平均步数与固定运动转成长期日均消耗。只需在生活状态明显变化时调整。")
-                explanationCard("3", "从记录中校准", "当已有记录足以观察方向时，系统会温和地结合平均摄入和体重方向修正消耗；不会因单日体重波动骤然改计划。")
+                explanationCard("2", "日常活动基准", "平均步数用于估算平时的活动消耗；实际运动发生后在首页记录，只增加运动当天的可用额度。")
+                explanationCard("3", "从记录中校准", "当已有记录足以观察方向时，系统会结合平均摄入、体重方向和已记录运动温和修正基础消耗，不会因单日波动骤然改计划。")
                 Text("天天健康提供生活方式管理参考，不替代医疗诊断或营养治疗。如有疾病、孕期或饮食障碍史，请先咨询专业人士。")
                     .font(.footnote).foregroundStyle(.secondary).padding(6)
             }

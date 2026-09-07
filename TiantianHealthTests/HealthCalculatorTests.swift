@@ -55,4 +55,38 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(HealthCalculator.plannedDeficit(tdee: 2_300, calorieTarget: 2_000), 300, accuracy: 0.001)
         XCTAssertEqual(HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: 2_310), 0.3, accuracy: 0.001)
     }
+
+    func testExerciseAddsToAvailableCalories() {
+        XCTAssertEqual(CalorieMath.availableCalories(base: 1_850, exercise: 320), 2_170, accuracy: 0.001)
+        XCTAssertEqual(CalorieMath.availableCalories(base: 1_850, exercise: -50), 1_850, accuracy: 0.001)
+    }
+
+    func testKilocalorieKilojouleRoundTrip() {
+        let kilojoules = CalorieMath.kilojoules(fromKilocalories: 250)
+        XCTAssertEqual(kilojoules, 1_046, accuracy: 0.001)
+        XCTAssertEqual(CalorieMath.kilocalories(fromKilojoules: kilojoules), 250, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testHomeScreenQuickActionRoutes() {
+        let router = AppRouter.shared
+        router.clearPendingShortcut()
+
+        XCTAssertTrue(router.enqueueShortcut(type: "com.shaoguoqing.tiantianhealth.weight"))
+        XCTAssertEqual(router.selectedTab, .trend)
+        XCTAssertEqual(router.pendingQuickAction?.destination, .weight)
+
+        XCTAssertTrue(router.enqueueShortcut(type: "com.shaoguoqing.tiantianhealth.breakfast"))
+        XCTAssertEqual(router.selectedTab, .today)
+        XCTAssertEqual(router.pendingQuickAction?.destination, .meal(.breakfast))
+
+        XCTAssertTrue(router.enqueueShortcut(type: "com.shaoguoqing.tiantianhealth.lunch"))
+        XCTAssertEqual(router.pendingQuickAction?.destination, .meal(.lunch))
+
+        XCTAssertTrue(router.enqueueShortcut(type: "com.shaoguoqing.tiantianhealth.dinner"))
+        XCTAssertEqual(router.pendingQuickAction?.destination, .meal(.dinner))
+
+        XCTAssertFalse(router.enqueueShortcut(type: "com.shaoguoqing.tiantianhealth.unknown"))
+        router.clearPendingShortcut()
+    }
 }

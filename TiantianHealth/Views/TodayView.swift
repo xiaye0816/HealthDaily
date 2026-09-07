@@ -3,13 +3,16 @@ import SwiftData
 
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var router: AppRouter
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
     @Query private var foodLogs: [FoodLogEntry]
+    @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var budgets: [DailyBudget]
 
     @State private var selectedMeal: MealType?
-    @State private var showingWeightEntry = false
+    @State private var addingExercise = false
+    @State private var editingExercise: ExerciseLogEntry?
     @State private var showingWeeklyReview = false
     @State private var pulseAddButton = false
     @AppStorage("lastDismissedReviewWeek") private var lastDismissedReviewWeek = ""
@@ -17,24 +20,35 @@ struct TodayView: View {
     private let today = DateTools.day(.now)
     private var profile: UserProfile? { profiles.first }
     private var todayLogs: [FoodLogEntry] { foodLogs.filter { DateTools.isSameDay($0.date, today) } }
+    private var todayExerciseLogs: [ExerciseLogEntry] {
+        exerciseLogs
+            .filter { DateTools.isSameDay($0.date, today) }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
     private var todayConsumed: Double { todayLogs.reduce(0) { $0 + $1.calories } }
-    private var todayBudget: Double {
+    private var todayExercise: Double { todayExerciseLogs.reduce(0) { $0 + $1.calories } }
+    private var todayBaseBudget: Double {
         budgets.first(where: { DateTools.isSameDay($0.date, today) })?.targetCalories
             ?? profile.map { dailyTarget(for: $0) }
             ?? 2_000
     }
+    private var todayBudget: Double { CalorieMath.availableCalories(base: todayBaseBudget, exercise: todayExercise) }
     private var remainingToday: Double { todayBudget - todayConsumed }
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
     private var weekBudget: Double {
         budgets.filter { budget in weekDays.contains(where: { DateTools.isSameDay($0, budget.date) }) }
             .reduce(0) { $0 + $1.targetCalories }
     }
+    private var weekExercise: Double {
+        exerciseLogs.filter { log in weekDays.contains(where: { DateTools.isSameDay($0, log.date) }) }
+            .reduce(0) { $0 + $1.calories }
+    }
+    private var weekAvailable: Double { CalorieMath.availableCalories(base: weekBudget, exercise: weekExercise) }
     private var weekConsumed: Double {
         foodLogs.filter { log in weekDays.contains(where: { DateTools.isSameDay($0, log.date) }) }
             .reduce(0) { $0 + $1.calories }
     }
     private var latestWeightKG: Double { weights.first?.weightKG ?? profile?.initialWeightKG ?? 0 }
-    private var trendPoints: [WeightPoint] { HealthCalculator.trendPoints(from: weights) }
 
     var body: some View {
         NavigationStack {
@@ -44,7 +58,7 @@ struct TodayView: View {
                         weeklyReviewBanner
                     }
                     calorieHero
-                    weightSummary
+                    exerciseSection
                     mealSection
                     weeklySummary
                 }
@@ -64,15 +78,20 @@ struct TodayView: View {
                 FoodPickerView(meal: meal, date: today)
                     .presentationDetents([.large])
             }
-            .sheet(isPresented: $showingWeightEntry) {
-                WeightEntrySheet(
-                    unit: profile?.weightUnit ?? .kg,
-                    initialDate: today,
-                    initialWeightKG: weights.first(where: { DateTools.isSameDay($0.date, today) })?.weightKG ?? latestWeightKG,
-                    previousWeightKG: weights.first(where: { !DateTools.isSameDay($0.date, today) })?.weightKG,
-                    onSave: saveWeight
-                )
-                .presentationDetents([.height(510)])
+            .sheet(isPresented: $addingExercise) {
+                ExerciseEntrySheet() { type, calories in
+                    modelContext.insert(ExerciseLogEntry(date: today, type: type, calories: calories))
+                    try? modelContext.save()
+                }
+                .presentationDetents([.large])
+            }
+            .sheet(item: $editingExercise) { entry in
+                ExerciseEntrySheet(entry: entry) { type, calories in
+                    entry.type = type
+                    entry.calories = calories
+                    try? modelContext.save()
+                }
+                .presentationDetents([.large])
             }
             .sheet(isPresented: $showingWeeklyReview) {
                 WeeklyReviewView(onAccept: acceptSuggestedBudget) {
@@ -83,7 +102,9 @@ struct TodayView: View {
             .onAppear {
                 ensureCurrentWeekBudgets()
                 refreshCalibration()
+                handlePendingShortcut()
             }
+            .onChange(of: router.pendingQuickAction) { _, _ in handlePendingShortcut() }
         }
     }
 
@@ -96,6 +117,18 @@ struct TodayView: View {
                     target: todayBudget
                 )
                 .frame(width: 205, height: 205)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        calorieMetric("基础额度", todayBaseBudget, prefix: "")
+                        calorieMetric("今日运动", todayExercise, prefix: "+")
+                        calorieMetric("今日可用", todayBudget, prefix: "")
+                    }
+                    VStack(spacing: 8) {
+                        calorieMetric("基础额度", todayBaseBudget, prefix: "")
+                        calorieMetric("今日运动", todayExercise, prefix: "+")
+                        calorieMetric("今日可用", todayBudget, prefix: "")
+                    }
+                }
                 VStack(spacing: 5) {
                     Text(remainingToday >= 0 ? "今天还可以安排" : "今天比计划多用了")
                         .font(.subheadline).foregroundStyle(.secondary)
@@ -104,7 +137,7 @@ struct TodayView: View {
                         .foregroundStyle(AppTheme.deepGreen)
                         .contentTransition(.numericText())
                     if remainingToday < 0 {
-                        Text("不需要补偿式节食，可以在本周预算里重新选择。")
+                        Text("不需要补偿式节食，本周结果会如实反映这次选择。")
                             .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
                 }
@@ -120,30 +153,74 @@ struct TodayView: View {
         }
     }
 
-    private var weightSummary: some View {
-        HealthCard {
-            HStack(spacing: 15) {
-                ZStack {
-                    Circle().fill(AppTheme.green.opacity(0.12)).frame(width: 52, height: 52)
-                    Image(systemName: "scalemass.fill").foregroundStyle(AppTheme.green)
+    private var exerciseSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("今日运动").font(.title3.bold())
+                Spacer()
+                Button { addingExercise = true } label: {
+                    Label("记录", systemImage: "plus")
+                        .font(.subheadline.bold())
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("体重").font(.subheadline).foregroundStyle(.secondary)
-                    if latestWeightKG > 0, let profile {
-                        Text("\(profile.weightUnit.displayValue(fromKilograms: latestWeightKG).formatted(.number.precision(.fractionLength(1)))) \(profile.weightUnit.rawValue)")
-                            .font(.title3.bold().monospacedDigit())
-                        Text(trendDescription)
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("今天还未记录").font(.headline)
+                .accessibilityIdentifier("add-exercise")
+            }
+            HealthCard {
+                if todayExerciseLogs.isEmpty {
+                    Button { addingExercise = true } label: {
+                        HStack(spacing: 13) {
+                            Image(systemName: "figure.run.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(AppTheme.orange)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("今天还没有运动记录")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                Text("运动后记下消耗，会增加今天可用额度")
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.secondaryText)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(todayExerciseLogs) { entry in
+                            HStack(spacing: 12) {
+                                Button { editingExercise = entry } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(entry.type)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(AppTheme.textPrimary)
+                                                .lineLimit(1)
+                                            Text("点击可修改")
+                                                .font(.caption2)
+                                                .foregroundStyle(AppTheme.secondaryText)
+                                        }
+                                        Spacer()
+                                        Text("+\(Int(entry.calories.rounded())) kcal")
+                                            .font(.subheadline.bold().monospacedDigit())
+                                            .foregroundStyle(AppTheme.deepGreen)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                Button(role: .destructive) {
+                                    withAnimation { modelContext.delete(entry) }
+                                    try? modelContext.save()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("删除 \(entry.type)")
+                            }
+                            .padding(.vertical, 10)
+                            if entry.id != todayExerciseLogs.last?.id { Divider() }
+                        }
                     }
                 }
-                Spacer()
-                Button(weights.contains(where: { DateTools.isSameDay($0.date, today) }) ? "修改" : "记录") {
-                    showingWeightEntry = true
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
             }
         }
     }
@@ -209,14 +286,13 @@ struct TodayView: View {
                     Spacer()
                     Text("周一至周日").font(.caption).foregroundStyle(.secondary)
                 }
-                SwiftUI.ProgressView(value: min(weekConsumed, max(weekBudget, 1)), total: max(weekBudget, 1))
+                SwiftUI.ProgressView(value: min(weekConsumed, max(weekAvailable, 1)), total: max(weekAvailable, 1))
                     .tint(AppTheme.orange)
-                HStack {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
+                    summaryNumber("基础预算", weekBudget)
+                    summaryNumber("运动增加", weekExercise, prefix: "+")
                     summaryNumber("已摄入", weekConsumed)
-                    Spacer()
-                    summaryNumber("总预算", weekBudget)
-                    Spacer()
-                    summaryNumber("剩余", weekBudget - weekConsumed)
+                    summaryNumber("剩余", weekAvailable - weekConsumed)
                 }
             }
         }
@@ -252,16 +328,6 @@ struct TodayView: View {
         }
     }
 
-    private var trendDescription: String {
-        guard trendPoints.count > 1, let first = trendPoints.first, let last = trendPoints.last else {
-            return "这是你的起点，继续记录即可"
-        }
-        let days = max(1, Calendar.current.dateComponents([.day], from: first.date, to: last.date).day ?? 1)
-        let weekly = (last.trendKG - first.trendKG) / Double(days) * 7
-        if abs(weekly) < 0.03 { return "近期趋势基本稳定" }
-        return "近期趋势每周 \(weekly > 0 ? "+" : "")\(weekly.formatted(.number.precision(.fractionLength(2)))) kg"
-    }
-
     private var weekIdentifier: String {
         DateTools.startOfWeek(containing: today).formatted(.iso8601.year().month().day())
     }
@@ -272,11 +338,23 @@ struct TodayView: View {
         return weekday == 2 && hasHistory && lastDismissedReviewWeek != weekIdentifier
     }
 
-    private func summaryNumber(_ title: String, _ value: Double) -> some View {
+    private func summaryNumber(_ title: String, _ value: Double, prefix: String = "") -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text("\(Int(value.rounded()))").font(.subheadline.bold().monospacedDigit())
+            Text("\(prefix)\(Int(value.rounded())) kcal").font(.subheadline.bold().monospacedDigit())
         }
+    }
+
+    private func calorieMetric(_ title: String, _ value: Double, prefix: String) -> some View {
+        VStack(spacing: 3) {
+            Text(title).font(.caption2).foregroundStyle(AppTheme.secondaryText)
+            Text("\(prefix)\(Int(value.rounded()))")
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundStyle(title == "今日运动" ? AppTheme.orange : AppTheme.textPrimary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 9)
+        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func dailyTarget(for profile: UserProfile) -> Double {
@@ -292,16 +370,6 @@ struct TodayView: View {
         try? modelContext.save()
     }
 
-    private func saveWeight(date: Date, kilograms: Double) {
-        if let existing = weights.first(where: { DateTools.isSameDay($0.date, date) }) {
-            existing.weightKG = kilograms
-        } else {
-            modelContext.insert(WeightEntry(date: date, weightKG: kilograms))
-        }
-        refreshCalibration()
-        try? modelContext.save()
-    }
-
     private func refreshCalibration() {
         guard let profile else { return }
         let updated = HealthCalculator.calibratedTDEE(
@@ -309,6 +377,7 @@ struct TodayView: View {
             current: profile.calibratedTDEE,
             weights: weights,
             foodLogs: foodLogs,
+            exerciseLogs: exerciseLogs,
             dailyTargets: budgets
         )
         if abs(updated - profile.calibratedTDEE) >= 1 {
@@ -326,6 +395,83 @@ struct TodayView: View {
         }
         lastDismissedReviewWeek = weekIdentifier
         try? modelContext.save()
+    }
+
+    private func handlePendingShortcut() {
+        guard let pending = router.pendingQuickAction,
+              case let .meal(meal) = pending.destination else { return }
+        selectedMeal = meal
+        router.consumeShortcut(id: pending.id)
+    }
+}
+
+struct ExerciseEntrySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let entry: ExerciseLogEntry?
+    let onSave: (String, Double) -> Void
+
+    @State private var type: String
+    @State private var caloriesText: String
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case type, calories }
+
+    init(entry: ExerciseLogEntry? = nil, onSave: @escaping (String, Double) -> Void) {
+        self.entry = entry
+        self.onSave = onSave
+        _type = State(initialValue: entry?.type ?? "")
+        _caloriesText = State(initialValue: entry.map { String(Int($0.calories.rounded())) } ?? "")
+    }
+
+    private var calories: Double {
+        Double(caloriesText.replacingOccurrences(of: ",", with: ".")) ?? 0
+    }
+
+    var body: some View {
+        BrandModalScaffold(
+            title: entry == nil ? "记录运动" : "修改运动",
+            subtitle: "运动消耗会增加今天可用的热量额度",
+            symbol: "figure.run"
+        ) {
+            dismiss()
+        } content: {
+            BrandSection("运动类型") {
+                TextField("例如：游泳、跑步、力量训练", text: $type)
+                    .textInputAutocapitalization(.never)
+                    .focused($focusedField, equals: .type)
+                    .padding(14)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
+                    .accessibilityIdentifier("exercise-type")
+            }
+            BrandSection("消耗热量") {
+                HStack {
+                    Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
+                    TextField("0", text: $caloriesText)
+                        .keyboardType(.decimalPad)
+                        .focused($focusedField, equals: .calories)
+                        .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
+                        .accessibilityIdentifier("exercise-calories")
+                    Text("kcal").foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 14))
+            }
+            Label("仅记录今天；保存后会立即加入今日和本周可用额度。", systemImage: "calendar.badge.checkmark")
+                .font(.footnote)
+                .foregroundStyle(AppTheme.deepGreen)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+        } footer: {
+            Button(entry == nil ? "保存运动" : "保存修改") {
+                onSave(type.trimmingCharacters(in: .whitespacesAndNewlines), calories)
+                dismiss()
+            }
+            .buttonStyle(BrandButtonStyle())
+            .disabled(type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || calories <= 0 || !calories.isFinite)
+            .accessibilityIdentifier("save-exercise")
+        }
+        .onAppear { focusedField = entry == nil ? .type : nil }
     }
 }
 

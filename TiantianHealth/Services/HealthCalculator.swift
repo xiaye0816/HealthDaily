@@ -66,9 +66,9 @@ enum HealthCalculator {
         return resting + stepEnergy(restingEnergy: resting, averageSteps: averageSteps) + dailyWorkoutEnergy(weightKG: weightKG, workouts: workouts)
     }
 
-    static func baselineTDEE(profile: UserProfile, weightKG: Double, workouts: [WorkoutBaseline]) -> Double {
+    static func baselineTDEE(profile: UserProfile, weightKG: Double) -> Double {
         let resting = restingEnergy(sex: profile.sex, age: profile.currentAge, heightCM: profile.heightCM, weightKG: weightKG)
-        return resting + stepEnergy(restingEnergy: resting, averageSteps: profile.averageSteps) + dailyWorkoutEnergy(weightKG: weightKG, workouts: workouts)
+        return resting + stepEnergy(restingEnergy: resting, averageSteps: profile.averageSteps)
     }
 
     static func desiredDailyDeficit(weightKG: Double, pace: GoalPace) -> Double {
@@ -117,6 +117,7 @@ enum HealthCalculator {
         current: Double,
         weights: [WeightEntry],
         foodLogs: [FoodLogEntry],
+        exerciseLogs: [ExerciseLogEntry],
         dailyTargets: [DailyBudget],
         referenceDate: Date = .now
     ) -> Double {
@@ -145,7 +146,11 @@ enum HealthCalculator {
 
         let averageIntake = validTotals.reduce(0, +) / Double(validTotals.count)
         let dailyObservedDeficit = (first.trendKG - last.trendKG) * 7_700 / Double(daySpan)
-        let observed = averageIntake + dailyObservedDeficit
+        let recordedExercise = exerciseLogs
+            .filter { $0.date >= first.date && $0.date <= last.date }
+            .reduce(0) { $0 + $1.calories }
+        let averageExercise = recordedExercise / Double(daySpan + 1)
+        let observed = averageIntake + dailyObservedDeficit - averageExercise
         guard observed.isFinite, observed > 900, observed < 6_000 else { return current }
 
         let blended = current * 0.85 + observed * 0.15
@@ -158,11 +163,10 @@ enum PlanUpdater {
     static func applySettingsChange(
         profile: UserProfile,
         weightKG: Double,
-        workouts: [WorkoutBaseline],
         budgets: [DailyBudget],
         referenceDate: Date = .now
     ) {
-        let baseline = HealthCalculator.baselineTDEE(profile: profile, weightKG: weightKG, workouts: workouts)
+        let baseline = HealthCalculator.baselineTDEE(profile: profile, weightKG: weightKG)
         profile.baselineTDEE = baseline
         profile.calibratedTDEE = baseline
         profile.updatedAt = .now
@@ -173,6 +177,22 @@ enum PlanUpdater {
         for budget in budgets where budget.date >= today && !budget.isLocked && weekDays.contains(where: { DateTools.isSameDay($0, budget.date) }) {
             budget.targetCalories = target
         }
+    }
+}
+
+enum CalorieMath {
+    static let kilojoulesPerKilocalorie = 4.184
+
+    static func kilojoules(fromKilocalories value: Double) -> Double {
+        value * kilojoulesPerKilocalorie
+    }
+
+    static func kilocalories(fromKilojoules value: Double) -> Double {
+        value / kilojoulesPerKilocalorie
+    }
+
+    static func availableCalories(base: Double, exercise: Double) -> Double {
+        base + max(0, exercise)
     }
 }
 

@@ -1,8 +1,102 @@
 import SwiftUI
 import SwiftData
+import UIKit
+
+enum AppTab: Int, Hashable {
+    case today
+    case budget
+    case trend
+    case me
+}
+
+enum QuickActionDestination: Equatable {
+    case weight
+    case meal(MealType)
+}
+
+struct PendingQuickAction: Identifiable, Equatable {
+    let id = UUID()
+    let destination: QuickActionDestination
+}
+
+@MainActor
+final class AppRouter: ObservableObject {
+    static let shared = AppRouter()
+
+    @Published var selectedTab: AppTab = .today
+    @Published private(set) var pendingQuickAction: PendingQuickAction?
+
+    private init() {}
+
+    @discardableResult
+    func enqueueShortcut(type: String) -> Bool {
+        let destination: QuickActionDestination
+        switch type {
+        case "com.shaoguoqing.tiantianhealth.weight":
+            destination = .weight
+        case "com.shaoguoqing.tiantianhealth.breakfast":
+            destination = .meal(.breakfast)
+        case "com.shaoguoqing.tiantianhealth.lunch":
+            destination = .meal(.lunch)
+        case "com.shaoguoqing.tiantianhealth.dinner":
+            destination = .meal(.dinner)
+        default:
+            return false
+        }
+
+        selectedTab = destination == .weight ? .trend : .today
+        pendingQuickAction = PendingQuickAction(destination: destination)
+        return true
+    }
+
+    func consumeShortcut(id: UUID) {
+        guard pendingQuickAction?.id == id else { return }
+        pendingQuickAction = nil
+    }
+
+    func clearPendingShortcut() {
+        pendingQuickAction = nil
+    }
+}
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
+}
+
+final class SceneDelegate: NSObject, UIWindowSceneDelegate {
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions
+    ) {
+        guard let shortcutItem = connectionOptions.shortcutItem else { return }
+        Task { @MainActor in
+            AppRouter.shared.enqueueShortcut(type: shortcutItem.type)
+        }
+    }
+
+    func windowScene(
+        _ windowScene: UIWindowScene,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        Task { @MainActor in
+            completionHandler(AppRouter.shared.enqueueShortcut(type: shortcutItem.type))
+        }
+    }
+}
 
 @main
 struct TiantianHealthApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let modelContainer: ModelContainer
 
     init() {
@@ -18,6 +112,7 @@ struct TiantianHealthApp: App {
                 WeightEntry.self,
                 FoodPreset.self,
                 FoodLogEntry.self,
+                ExerciseLogEntry.self,
                 DailyBudget.self
             ])
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
@@ -38,8 +133,11 @@ struct TiantianHealthApp: App {
 struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    @AppStorage("didNormalizeStageGoalV2") private var didNormalizeStageGoalV2 = false
+    @AppStorage("didMigrateActualExerciseV1") private var didMigrateActualExerciseV1 = false
     @Query private var profiles: [UserProfile]
+    @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
+    @Query private var budgets: [DailyBudget]
+    @StateObject private var router = AppRouter.shared
     @State private var isShowingSplash = true
     @State private var splashOpacity = 1.0
 
@@ -56,6 +154,7 @@ struct RootView: View {
                     }
                 }
             }
+            .environmentObject(router)
             .allowsHitTesting(!isShowingSplash)
 
             if isShowingSplash {
@@ -78,13 +177,40 @@ struct RootView: View {
             isShowingSplash = false
         }
         .task(id: profiles.first?.id) {
-            guard !didNormalizeStageGoalV2, let profile = profiles.first else { return }
-            let range = HealthCalculator.healthyStageRange(weightKG: profile.initialWeightKG)
-            if !range.contains(profile.targetWeightKG) {
-                profile.targetWeightKG = HealthCalculator.healthyStageTarget(weightKG: profile.initialWeightKG)
-                try? modelContext.save()
-            }
-            didNormalizeStageGoalV2 = true
+            migrateFromFixedWorkoutBaselineIfNeeded()
+        }
+    }
+
+    private func migrateFromFixedWorkoutBaselineIfNeeded() {
+        guard !didMigrateActualExerciseV1, let profile = profiles.first else { return }
+
+        let latestWeight = weights.first?.weightKG ?? profile.initialWeightKG
+        let previousBaseline = max(1, profile.baselineTDEE)
+        let learnedAdjustment = profile.calibratedTDEE - previousBaseline
+        let newBaseline = HealthCalculator.baselineTDEE(profile: profile, weightKG: latestWeight)
+        let adjusted = newBaseline + learnedAdjustment
+
+        profile.baselineTDEE = newBaseline
+        profile.calibratedTDEE = min(newBaseline * 1.45, max(newBaseline * 0.65, adjusted))
+        profile.updatedAt = .now
+
+        let newTarget = HealthCalculator.dailyCalorieTarget(
+            tdee: profile.calibratedTDEE,
+            weightKG: latestWeight,
+            pace: profile.pace,
+            sex: profile.sex
+        )
+        let today = DateTools.day(.now)
+        for budget in budgets where budget.date >= today {
+            budget.targetCalories = newTarget
+        }
+
+        do {
+            try modelContext.save()
+            didMigrateActualExerciseV1 = true
+        } catch {
+            modelContext.rollback()
+            // Keep every existing record untouched and retry the migration next launch.
         }
     }
 }

@@ -4,9 +4,9 @@ import Charts
 
 struct ProgressView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var router: AppRouter
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date) private var weights: [WeightEntry]
-    @Query private var workouts: [WorkoutBaseline]
 
     @State private var editingEntry: WeightEntry?
     @State private var addingWeight = false
@@ -30,7 +30,7 @@ struct ProgressView: View {
                 .padding(.bottom, 28)
             }
             .background(AppTheme.background)
-            .navigationTitle("进展")
+            .navigationTitle("趋势")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { addingWeight = true } label: { Label("记录", systemImage: "plus") }
@@ -38,11 +38,11 @@ struct ProgressView: View {
             }
             .sheet(isPresented: $addingWeight) {
                 weightSheet(entry: nil)
-                    .presentationDetents([.height(510)])
+                    .presentationDetents([.large])
             }
             .sheet(item: $editingEntry) { entry in
                 weightSheet(entry: entry)
-                    .presentationDetents([.height(510)])
+                    .presentationDetents([.large])
             }
             .confirmationDialog("删除这条体重记录？", isPresented: Binding(get: { deletingEntry != nil }, set: { if !$0 { deletingEntry = nil } }), titleVisibility: .visible) {
                 Button("删除", role: .destructive) {
@@ -51,6 +51,8 @@ struct ProgressView: View {
                 }
                 Button("取消", role: .cancel) { deletingEntry = nil }
             }
+            .onAppear { handlePendingShortcut() }
+            .onChange(of: router.pendingQuickAction) { _, _ in handlePendingShortcut() }
         }
     }
 
@@ -137,13 +139,14 @@ struct ProgressView: View {
                 Divider()
                 if let profile {
                     let resting = HealthCalculator.restingEnergy(sex: profile.sex, age: profile.currentAge, heightCM: profile.heightCM, weightKG: latestWeight)
-                    let weeklyWorkout = HealthCalculator.weeklyWorkoutEnergy(weightKG: latestWeight, workouts: workouts)
                     let dailyTarget = HealthCalculator.dailyCalorieTarget(tdee: profile.calibratedTDEE, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
                     let dailyDeficit = HealthCalculator.plannedDeficit(tdee: profile.calibratedTDEE, calorieTarget: dailyTarget)
                     expenditureRow("静息消耗", resting)
                     expenditureRow("日常步数", HealthCalculator.stepEnergy(restingEnergy: resting, averageSteps: profile.averageSteps))
-                    expenditureRow("固定运动 · 周总", weeklyWorkout)
-                    expenditureRow("固定运动 · 计入日均", weeklyWorkout / 7)
+                    Label("实际运动会在发生当天单独增加可用额度，不计入固定基准。", systemImage: "figure.run")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .padding(.vertical, 3)
                     Divider().overlay(AppTheme.divider)
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
@@ -253,5 +256,12 @@ struct ProgressView: View {
 
     private func previousWeight(before date: Date) -> Double? {
         weights.filter { $0.date < DateTools.day(date) }.last?.weightKG
+    }
+
+    private func handlePendingShortcut() {
+        guard let pending = router.pendingQuickAction,
+              pending.destination == .weight else { return }
+        addingWeight = true
+        router.consumeShortcut(id: pending.id)
     }
 }
