@@ -112,6 +112,18 @@ enum HealthCalculator {
         }
     }
 
+    static func weightChartDomain(points: [WeightPoint]) -> ClosedRange<Double>? {
+        let values = points.flatMap { [$0.rawKG, $0.trendKG] }
+            .filter { $0.isFinite && $0 > 0 }
+        guard let minimum = values.min(), let maximum = values.max() else { return nil }
+
+        let center = (minimum + maximum) / 2
+        let span = max(1, (maximum - minimum) * 1.4)
+        let lower = max(0, floor((center - span / 2) * 10) / 10)
+        let upper = max(lower + 1, ceil((center + span / 2) * 10) / 10)
+        return lower...upper
+    }
+
     static func calibratedTDEE(
         baseline: Double,
         current: Double,
@@ -217,5 +229,9 @@ enum DateTools {
 
     static func isSameDay(_ lhs: Date, _ rhs: Date) -> Bool {
         calendar.isDate(lhs, inSameDayAs: rhs)
+    }
+
+    static func canEditLogs(on date: Date, referenceDate: Date = .now) -> Bool {
+        day(date) <= day(referenceDate)
     }
 }

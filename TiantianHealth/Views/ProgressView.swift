@@ -16,6 +16,10 @@ struct ProgressView: View {
     private var points: [WeightPoint] { HealthCalculator.trendPoints(from: weights) }
     private var latestWeight: Double { weights.last?.weightKG ?? profile?.initialWeightKG ?? 0 }
     private var unit: WeightUnit { profile?.weightUnit ?? .kg }
+    private var chartDisplayDomain: ClosedRange<Double> {
+        guard let kilograms = HealthCalculator.weightChartDomain(points: points) else { return 0...1 }
+        return unit.displayValue(fromKilograms: kilograms.lowerBound)...unit.displayValue(fromKilograms: kilograms.upperBound)
+    }
 
     var body: some View {
         NavigationStack {
@@ -113,11 +117,12 @@ struct ProgressView: View {
                         }
                     }
                     .chartYAxis {
-                        AxisMarks(position: .leading) { _ in
+                        AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
                             AxisGridLine().foregroundStyle(AppTheme.divider.opacity(0.8))
-                            AxisValueLabel()
+                            AxisValueLabel(format: Decimal.FormatStyle.number.precision(.fractionLength(0...1)))
                         }
                     }
+                    .chartYScale(domain: chartDisplayDomain)
                     .frame(height: 220)
                 }
             }

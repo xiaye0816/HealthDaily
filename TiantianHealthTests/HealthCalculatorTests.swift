@@ -39,6 +39,42 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(points[0].trendKG, 80, accuracy: 0.001)
     }
 
+    func testWeightChartDomainGivesSinglePointOneKilogramContext() {
+        let point = WeightPoint(id: UUID(), date: .now, rawKG: 81, trendKG: 81)
+        let domain = HealthCalculator.weightChartDomain(points: [point])
+        XCTAssertEqual(domain?.lowerBound ?? 0, 80.5, accuracy: 0.001)
+        XCTAssertEqual(domain?.upperBound ?? 0, 81.5, accuracy: 0.001)
+    }
+
+    func testWeightChartDomainAmplifiesSmallChanges() {
+        let points = [
+            WeightPoint(id: UUID(), date: .now, rawKG: 80.8, trendKG: 80.8),
+            WeightPoint(id: UUID(), date: .now, rawKG: 81, trendKG: 81)
+        ]
+        let domain = HealthCalculator.weightChartDomain(points: points)
+        XCTAssertEqual(domain?.lowerBound ?? 0, 80.4, accuracy: 0.001)
+        XCTAssertEqual(domain?.upperBound ?? 0, 81.4, accuracy: 0.001)
+    }
+
+    func testWeightChartDomainAddsPaddingForLargerRange() {
+        let points = [
+            WeightPoint(id: UUID(), date: .now, rawKG: 75, trendKG: 75),
+            WeightPoint(id: UUID(), date: .now, rawKG: 81, trendKG: 81)
+        ]
+        let domain = HealthCalculator.weightChartDomain(points: points)
+        XCTAssertEqual(domain?.lowerBound ?? 0, 73.8, accuracy: 0.001)
+        XCTAssertEqual(domain?.upperBound ?? 0, 82.2, accuracy: 0.001)
+    }
+
+    func testOnlyPastAndTodayLogsAreEditable() {
+        let reference = DateTools.day(.now)
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: reference)!
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: reference)!
+        XCTAssertTrue(DateTools.canEditLogs(on: yesterday, referenceDate: reference))
+        XCTAssertTrue(DateTools.canEditLogs(on: reference, referenceDate: reference))
+        XCTAssertFalse(DateTools.canEditLogs(on: tomorrow, referenceDate: reference))
+    }
+
     func testCalorieTargetRoundsToFifty() {
         let result = HealthCalculator.dailyCalorieTarget(tdee: 2_280, weightKG: 80, pace: .gentle, sex: .male)
         XCTAssertEqual(result.truncatingRemainder(dividingBy: 50), 0, accuracy: 0.001)

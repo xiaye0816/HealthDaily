@@ -11,6 +11,7 @@ struct TodayView: View {
     @Query private var budgets: [DailyBudget]
 
     @State private var selectedMeal: MealType?
+    @State private var editingFood: FoodLogEntry?
     @State private var addingExercise = false
     @State private var editingExercise: ExerciseLogEntry?
     @State private var showingWeeklyReview = false
@@ -78,15 +79,19 @@ struct TodayView: View {
                 FoodPickerView(meal: meal, date: today)
                     .presentationDetents([.large])
             }
+            .sheet(item: $editingFood) { entry in
+                FoodLogEntryEditorSheet(entry: entry)
+                    .presentationDetents([.large])
+            }
             .sheet(isPresented: $addingExercise) {
-                ExerciseEntrySheet() { type, calories in
+                ExerciseEntrySheet(date: today) { type, calories in
                     modelContext.insert(ExerciseLogEntry(date: today, type: type, calories: calories))
                     try? modelContext.save()
                 }
                 .presentationDetents([.large])
             }
             .sheet(item: $editingExercise) { entry in
-                ExerciseEntrySheet(entry: entry) { type, calories in
+                ExerciseEntrySheet(date: today, entry: entry) { type, calories in
                     entry.type = type
                     entry.calories = calories
                     try? modelContext.save()
@@ -253,16 +258,27 @@ struct TodayView: View {
                             Divider()
                             ForEach(entries) { entry in
                                 HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(entry.nameSnapshot).font(.subheadline.weight(.medium))
-                                        Text("\(entry.quantitySnapshot.cleanString) \(entry.unitSnapshot)")
-                                            .font(.caption).foregroundStyle(.secondary)
+                                    Button { editingFood = entry } label: {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(entry.nameSnapshot)
+                                                    .font(.subheadline.weight(.medium))
+                                                    .foregroundStyle(AppTheme.textPrimary)
+                                                Text("\(entry.quantitySnapshot.cleanString) \(entry.unitSnapshot) · 点击可修改")
+                                                    .font(.caption).foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            Text("\(Int(entry.calories.rounded())) kcal")
+                                                .font(.subheadline.monospacedDigit())
+                                                .foregroundStyle(AppTheme.textPrimary)
+                                        }
+                                        .contentShape(Rectangle())
                                     }
-                                    Spacer()
-                                    Text("\(Int(entry.calories.rounded())) kcal")
-                                        .font(.subheadline.monospacedDigit())
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("edit-food-\(entry.nameSnapshot)")
                                     Button(role: .destructive) {
                                         withAnimation { modelContext.delete(entry) }
+                                        try? modelContext.save()
                                     } label: {
                                         Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                                     }
@@ -407,6 +423,7 @@ struct TodayView: View {
 
 struct ExerciseEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
+    let date: Date
     let entry: ExerciseLogEntry?
     let onSave: (String, Double) -> Void
 
@@ -416,7 +433,8 @@ struct ExerciseEntrySheet: View {
 
     private enum Field { case type, calories }
 
-    init(entry: ExerciseLogEntry? = nil, onSave: @escaping (String, Double) -> Void) {
+    init(date: Date = .now, entry: ExerciseLogEntry? = nil, onSave: @escaping (String, Double) -> Void) {
+        self.date = DateTools.day(date)
         self.entry = entry
         self.onSave = onSave
         _type = State(initialValue: entry?.type ?? "")
@@ -430,7 +448,7 @@ struct ExerciseEntrySheet: View {
     var body: some View {
         BrandModalScaffold(
             title: entry == nil ? "记录运动" : "修改运动",
-            subtitle: "运动消耗会增加今天可用的热量额度",
+            subtitle: "记录到 \(date.formatted(.dateTime.month().day()))，运动消耗会增加当天可用额度",
             symbol: "figure.run"
         ) {
             dismiss()
@@ -456,7 +474,7 @@ struct ExerciseEntrySheet: View {
                 .padding(14)
                 .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 14))
             }
-            Label("仅记录今天；保存后会立即加入今日和本周可用额度。", systemImage: "calendar.badge.checkmark")
+            Label("保存后会立即加入该日和本周可用额度。", systemImage: "calendar.badge.checkmark")
                 .font(.footnote)
                 .foregroundStyle(AppTheme.deepGreen)
                 .frame(maxWidth: .infinity, alignment: .leading)

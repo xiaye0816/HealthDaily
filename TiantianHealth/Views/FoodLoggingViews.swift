@@ -27,7 +27,11 @@ struct FoodPickerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            BrandSheetHeader(title: "记录\(meal.rawValue)", subtitle: "从常用食物快速添加，也可以直接记热量", symbol: meal.symbol) { dismiss() }
+            BrandSheetHeader(
+                title: "记录\(meal.rawValue)",
+                subtitle: "\(date.formatted(.dateTime.month().day())) · 从常用食物快速添加，也可以直接记热量",
+                symbol: meal.symbol
+            ) { dismiss() }
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AppTheme.secondaryText)
                 TextField("搜索我的食材", text: $searchText)
@@ -137,6 +141,7 @@ struct FoodPickerView: View {
                         .background(AppTheme.green.opacity(0.12), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("选择 \(preset.name)")
             }
         }
         .padding(15)
@@ -193,6 +198,132 @@ struct FoodPickerView: View {
         }
         try? modelContext.save()
         addTrigger.toggle()
+        dismiss()
+    }
+}
+
+struct FoodLogEntryEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    let entry: FoodLogEntry
+
+    @State private var name: String
+    @State private var meal: MealType
+    @State private var quantityText: String
+    @State private var caloriesText: String
+    @State private var caloriesPerUnit: Double
+    @FocusState private var focusedField: Field?
+
+    private enum Field {
+        case name
+        case quantity
+        case calories
+    }
+
+    init(entry: FoodLogEntry) {
+        self.entry = entry
+        let quantity = max(entry.quantitySnapshot, 0.0001)
+        _name = State(initialValue: entry.nameSnapshot)
+        _meal = State(initialValue: entry.meal)
+        _quantityText = State(initialValue: entry.quantitySnapshot.cleanString)
+        _caloriesText = State(initialValue: entry.calories.cleanString)
+        _caloriesPerUnit = State(initialValue: entry.calories / quantity)
+    }
+
+    private var quantity: Double { parsedNumber(quantityText) }
+    private var calories: Double { parsedNumber(caloriesText) }
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var canSave: Bool {
+        !trimmedName.isEmpty && quantity > 0 && calories > 0 && quantity.isFinite && calories.isFinite
+    }
+
+    var body: some View {
+        BrandModalScaffold(
+            title: "编辑饮食记录",
+            subtitle: "\(entry.date.formatted(.dateTime.month().day())) · 只修改这一次记录",
+            symbol: "fork.knife"
+        ) {
+            dismiss()
+        } content: {
+            BrandSection("名称") {
+                TextField("食物名称", text: $name)
+                    .textInputAutocapitalization(.never)
+                    .focused($focusedField, equals: .name)
+                    .padding(14)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
+                    .accessibilityIdentifier("food-log-name")
+            }
+            BrandSection("餐次") {
+                Picker("餐次", selection: $meal) {
+                    ForEach(MealType.allCases) { option in
+                        Text(option.rawValue).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            BrandSection("数量") {
+                HStack(spacing: 10) {
+                    TextField("数量", text: $quantityText)
+                        .keyboardType(.decimalPad)
+                        .focused($focusedField, equals: .quantity)
+                        .font(.title2.bold().monospacedDigit())
+                        .accessibilityIdentifier("food-log-quantity")
+                    Text(entry.unitSnapshot)
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
+                Text("修改数量时，会按当前每\(entry.unitSnapshot)热量自动换算总热量。")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+            BrandSection("总热量") {
+                HStack(spacing: 10) {
+                    Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
+                    TextField("热量", text: $caloriesText)
+                        .keyboardType(.decimalPad)
+                        .focused($focusedField, equals: .calories)
+                        .font(.title2.bold().monospacedDigit())
+                        .accessibilityIdentifier("food-log-calories")
+                    Text("kcal").foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 13))
+            }
+            Label("单位沿用原记录；这里的修改不会改变食物库预设。", systemImage: "checkmark.shield.fill")
+                .font(.footnote)
+                .foregroundStyle(AppTheme.deepGreen)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+        } footer: {
+            Button("保存修改") { save() }
+                .buttonStyle(BrandButtonStyle())
+                .disabled(!canSave)
+                .accessibilityIdentifier("save-food-log")
+        }
+        .onChange(of: quantityText) { _, _ in
+            guard focusedField == .quantity, quantity > 0, quantity.isFinite else { return }
+            caloriesText = (caloriesPerUnit * quantity).cleanString
+        }
+        .onChange(of: caloriesText) { _, _ in
+            guard focusedField == .calories, calories > 0, calories.isFinite, quantity > 0 else { return }
+            caloriesPerUnit = calories / quantity
+        }
+    }
+
+    private func parsedNumber(_ text: String) -> Double {
+        Double(text.replacingOccurrences(of: ",", with: ".")) ?? 0
+    }
+
+    private func save() {
+        entry.nameSnapshot = trimmedName
+        entry.mealRaw = meal.rawValue
+        entry.quantitySnapshot = quantity
+        entry.calories = calories
+        try? modelContext.save()
         dismiss()
     }
 }
@@ -358,11 +489,13 @@ struct QuickCaloriesView: View {
                 TextField("名称（可选）", text: $name)
                     .padding(14)
                     .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
+                    .accessibilityIdentifier("quick-calorie-name")
                 HStack {
                     Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
                     TextField("热量", text: $caloriesText)
                         .keyboardType(.decimalPad)
                         .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
+                        .accessibilityIdentifier("quick-calorie-value")
                     Text("kcal").foregroundStyle(AppTheme.secondaryText)
                 }
                 .padding(14)
