@@ -27,6 +27,8 @@
 3. 选择 iOS 17 或更高版本模拟器运行。
 4. 真机运行时，在 Signing & Capabilities 中选择自己的开发团队，并确保 Bundle ID 唯一。
 
+真机覆盖安装必须保留现有数据，并分别核对主 App 与 Widget 的签名。完整流程见 [真机签名与无损安装手册](docs/DEVICE_INSTALLATION.md)。
+
 ## 测试
 
 ```bash
