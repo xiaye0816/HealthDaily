@@ -66,6 +66,37 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(domain?.upperBound ?? 0, 82.2, accuracy: 0.001)
     }
 
+    func testWeightChartAxisUsesActualRecordDates() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let points = (0..<7).map { index in
+            WeightPoint(
+                id: UUID(),
+                date: start.addingTimeInterval(Double(index) * 86_400),
+                rawKG: 81 - Double(index) * 0.1,
+                trendKG: 81
+            )
+        }
+        let dates = HealthCalculator.weightChartAxisDates(points: points)
+        XCTAssertEqual(dates, [points[0].date, points[2].date, points[4].date, points[6].date])
+    }
+
+    func testWeightChartAxisShowsOneLabelForMultipleRecordsOnSameDay() {
+        let calendar = Calendar(identifier: .gregorian)
+        let day = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_000_000))
+        let first = WeightPoint(id: UUID(), date: day.addingTimeInterval(3_600), rawKG: 81, trendKG: 81)
+        let second = WeightPoint(id: UUID(), date: day.addingTimeInterval(43_200), rawKG: 80.5, trendKG: 80.875)
+
+        XCTAssertEqual(HealthCalculator.weightChartAxisDates(points: [first, second]), [first.date])
+    }
+
+    func testNearestWeightPointSupportsChartScrubbing() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let first = WeightPoint(id: UUID(), date: start, rawKG: 81, trendKG: 81)
+        let second = WeightPoint(id: UUID(), date: start.addingTimeInterval(86_400), rawKG: 80.5, trendKG: 80.875)
+        let touchedDate = start.addingTimeInterval(70_000)
+        XCTAssertEqual(HealthCalculator.nearestWeightPoint(to: touchedDate, in: [first, second])?.id, second.id)
+    }
+
     func testOnlyPastAndTodayLogsAreEditable() {
         let reference = DateTools.day(.now)
         let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: reference)!

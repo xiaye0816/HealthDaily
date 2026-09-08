@@ -124,6 +124,25 @@ enum HealthCalculator {
         return lower...upper
     }
 
+    static func weightChartAxisDates(points: [WeightPoint], maximumCount: Int = 4) -> [Date] {
+        let calendar = Calendar.current
+        let dates = points.sorted { $0.date < $1.date }.map(\.date).reduce(into: [Date]()) { result, date in
+            guard result.last.map({ calendar.isDate($0, inSameDayAs: date) }) != true else { return }
+            result.append(date)
+        }
+        guard maximumCount > 1, dates.count > maximumCount else { return dates }
+        let lastIndex = dates.count - 1
+        return (0..<maximumCount).map { step in
+            dates[Int((Double(lastIndex) * Double(step) / Double(maximumCount - 1)).rounded())]
+        }
+    }
+
+    static func nearestWeightPoint(to date: Date, in points: [WeightPoint]) -> WeightPoint? {
+        points.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
+    }
+
     static func calibratedTDEE(
         baseline: Double,
         current: Double,

@@ -11,6 +11,7 @@ struct ProgressView: View {
     @State private var editingEntry: WeightEntry?
     @State private var addingWeight = false
     @State private var deletingEntry: WeightEntry?
+    @State private var selectedWeightID: UUID?
 
     private var profile: UserProfile? { profiles.first }
     private var points: [WeightPoint] { HealthCalculator.trendPoints(from: weights) }
@@ -19,6 +20,25 @@ struct ProgressView: View {
     private var chartDisplayDomain: ClosedRange<Double> {
         guard let kilograms = HealthCalculator.weightChartDomain(points: points) else { return 0...1 }
         return unit.displayValue(fromKilograms: kilograms.lowerBound)...unit.displayValue(fromKilograms: kilograms.upperBound)
+    }
+    private var selectedWeightPoint: WeightPoint? {
+        guard let selectedWeightID else { return nil }
+        return points.first { $0.id == selectedWeightID }
+    }
+    private var chartXAxisDates: [Date] {
+        HealthCalculator.weightChartAxisDates(points: points)
+    }
+    private var chartXDomain: ClosedRange<Date>? {
+        guard let first = points.first?.date, let last = points.last?.date else { return nil }
+        let visibleSpan = max(last.timeIntervalSince(first), 24 * 60 * 60)
+        let padding = max(5 * 60 * 60, visibleSpan * 0.07)
+        return first.addingTimeInterval(-padding)...last.addingTimeInterval(padding)
+    }
+    private var selectedWeightAccessibilityValue: String {
+        guard let selectedWeightPoint else { return "未选择记录" }
+        let weight = unit.displayValue(fromKilograms: selectedWeightPoint.rawKG)
+            .formatted(.number.precision(.fractionLength(1)))
+        return "已选择 \(weight) \(unit.rawValue)，\(selectedWeightPoint.date.formatted(.dateTime.month().day()))"
     }
 
     var body: some View {
@@ -88,7 +108,7 @@ struct ProgressView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("体重方向").font(.headline)
-                        Text(points.count <= 1 ? "从第一个点开始也有意义" : "圆点是记录，曲线淡化日常波动")
+                        Text(points.count <= 1 ? "从第一个点开始也有意义" : "曲线连接每次记录 · 按住滑动查看详情")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -96,24 +116,55 @@ struct ProgressView: View {
                 if points.isEmpty {
                     EmptyStateView(symbol: "chart.xyaxis.line", title: "还没有体重记录", message: "添加第一条记录，就能看到目标距离。")
                 } else {
-                    Chart(points) { point in
-                        LineMark(
-                            x: .value("日期", point.date),
-                            y: .value("趋势", unit.displayValue(fromKilograms: point.trendKG))
-                        )
-                        .foregroundStyle(AppTheme.green)
-                        .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                        PointMark(
-                            x: .value("日期", point.date),
-                            y: .value("记录", unit.displayValue(fromKilograms: point.rawKG))
-                        )
-                        .foregroundStyle(AppTheme.orange.opacity(0.75))
-                        .symbolSize(34)
+                    Chart {
+                        ForEach(points) { point in
+                            LineMark(
+                                x: .value("日期", point.date),
+                                y: .value("体重", unit.displayValue(fromKilograms: point.rawKG))
+                            )
+                            .foregroundStyle(AppTheme.green)
+                            .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                            .interpolationMethod(.linear)
+
+                            PointMark(
+                                x: .value("日期", point.date),
+                                y: .value("记录", unit.displayValue(fromKilograms: point.rawKG))
+                            )
+                            .foregroundStyle(AppTheme.orange)
+                            .symbolSize(selectedWeightID == point.id ? 70 : 40)
+                        }
+
+                        if let selectedWeightPoint {
+                            RuleMark(x: .value("所选日期", selectedWeightPoint.date))
+                                .foregroundStyle(AppTheme.deepGreen.opacity(0.38))
+                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                                .annotation(
+                                    position: .top,
+                                    spacing: 8,
+                                    overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                                ) {
+                                    weightAnnotation(for: selectedWeightPoint)
+                                }
+
+                            PointMark(
+                                x: .value("所选日期", selectedWeightPoint.date),
+                                y: .value("所选体重", unit.displayValue(fromKilograms: selectedWeightPoint.rawKG))
+                            )
+                            .foregroundStyle(AppTheme.green)
+                            .symbolSize(105)
+                        }
                     }
                     .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                        AxisMarks(values: chartXAxisDates) { value in
                             AxisGridLine().foregroundStyle(.clear)
-                            AxisValueLabel(format: .dateTime.month().day())
+                            if let date = value.as(Date.self) {
+                                AxisValueLabel(
+                                    anchor: chartAxisLabelAnchor(for: date),
+                                    collisionResolution: .disabled
+                                ) {
+                                    Text(date.formatted(.dateTime.month().day()))
+                                }
+                            }
                         }
                     }
                     .chartYAxis {
@@ -123,10 +174,64 @@ struct ProgressView: View {
                         }
                     }
                     .chartYScale(domain: chartDisplayDomain)
+                    .modifier(WeightChartXDomain(domain: chartXDomain))
+                    .chartOverlay { proxy in
+                        GeometryReader { geometry in
+                            Rectangle()
+                                .fill(.clear)
+                                .contentShape(Rectangle())
+                                .gesture(weightInspectionGesture(proxy: proxy, geometry: geometry))
+                        }
+                    }
+                    .sensoryFeedback(.selection, trigger: selectedWeightID)
                     .frame(height: 220)
+                    .accessibilityIdentifier("weight-chart")
+                    .accessibilityLabel("体重曲线")
+                    .accessibilityValue(selectedWeightAccessibilityValue)
+                    .accessibilityHint("按住并左右滑动，可以查看每条体重记录")
                 }
             }
         }
+    }
+
+    private func weightAnnotation(for point: WeightPoint) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(unit.displayValue(fromKilograms: point.rawKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+                .font(.subheadline.bold().monospacedDigit())
+            Text(point.date.formatted(.dateTime.month().day().weekday(.abbreviated)))
+                .font(.caption2)
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+        .foregroundStyle(AppTheme.textPrimary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(AppTheme.divider, lineWidth: 1)
+        }
+        .shadow(color: AppTheme.deepGreen.opacity(0.12), radius: 8, y: 3)
+    }
+
+    private func chartAxisLabelAnchor(for date: Date) -> UnitPoint {
+        if chartXAxisDates.count == 1 { return .top }
+        if date == chartXAxisDates.first { return .topLeading }
+        if date == chartXAxisDates.last { return .topTrailing }
+        return .top
+    }
+
+    private func weightInspectionGesture(proxy: ChartProxy, geometry: GeometryProxy) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.12, maximumDistance: 12)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                guard case let .second(true, drag?) = value,
+                      let plotFrame = proxy.plotFrame else { return }
+                let plotRect = geometry[plotFrame]
+                let x = min(max(drag.location.x, plotRect.minX), plotRect.maxX) - plotRect.minX
+                guard let date: Date = proxy.value(atX: x),
+                      let nearest = HealthCalculator.nearestWeightPoint(to: date, in: points) else { return }
+                selectedWeightID = nearest.id
+            }
     }
 
     private var expenditureCard: some View {
@@ -268,5 +373,18 @@ struct ProgressView: View {
               pending.destination == .weight else { return }
         addingWeight = true
         router.consumeShortcut(id: pending.id)
+    }
+}
+
+private struct WeightChartXDomain: ViewModifier {
+    let domain: ClosedRange<Date>?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let domain {
+            content.chartXScale(domain: domain)
+        } else {
+            content
+        }
     }
 }

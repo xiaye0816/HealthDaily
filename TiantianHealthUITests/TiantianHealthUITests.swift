@@ -109,7 +109,7 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["save-exercise"].tap()
         XCTAssertTrue(app.staticTexts["饮食与运动明细"].waitForExistence(timeout: 4))
         capture("08-today-detail")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons["本周预算"].tap()
         XCTAssertTrue(app.navigationBars["本周预算"].waitForExistence(timeout: 4))
 
         let pastBudgetDay = app.buttons["budget-day-past"]
@@ -130,7 +130,7 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["加入早餐"].tap()
         XCTAssertTrue(app.staticTexts["煎鸡胸"].waitForExistence(timeout: 4))
         capture("09-past-day-backfill")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons["本周预算"].tap()
         XCTAssertTrue(app.navigationBars["本周预算"].waitForExistence(timeout: 4))
 
         app.tabBars.buttons["趋势"].tap()
@@ -143,6 +143,13 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["增加体重"].tap()
         app.buttons["保存体重"].tap()
         XCTAssertTrue(app.navigationBars["趋势"].waitForExistence(timeout: 4))
+
+        let weightChart = app.otherElements["weight-chart"]
+        XCTAssertTrue(weightChart.waitForExistence(timeout: 3))
+        let chartStart = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.55))
+        let chartEnd = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.55))
+        chartStart.press(forDuration: 0.2, thenDragTo: chartEnd)
+        XCTAssertTrue(app.staticTexts["65.1 kg"].waitForExistence(timeout: 3))
 
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 4))
@@ -168,6 +175,28 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["confirm-reset-all-data"].tap()
         XCTAssertTrue(app.staticTexts["先认识一下你"].waitForExistence(timeout: 6))
         XCTAssertFalse(brandSplash.exists)
+    }
+
+    func testWeightChartTracksRecordsAndSupportsScrubbing() throws {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-weight-chart"]
+        app.launch()
+
+        app.tabBars.buttons["趋势"].tap()
+        XCTAssertTrue(app.navigationBars["趋势"].waitForExistence(timeout: 5))
+
+        let weightChart = app.otherElements["weight-chart"]
+        XCTAssertTrue(weightChart.waitForExistence(timeout: 3))
+        let chartStart = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.55))
+        let chartEnd = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.55))
+        chartStart.press(forDuration: 0.2, thenDragTo: chartEnd)
+        let selectionExpectation = expectation(
+            for: NSPredicate(format: "value CONTAINS %@", "80.5 kg"),
+            evaluatedWith: weightChart
+        )
+        wait(for: [selectionExpectation], timeout: 3)
+        capture("11-weight-chart-scrubbing")
     }
 
     private func capture(_ name: String) {

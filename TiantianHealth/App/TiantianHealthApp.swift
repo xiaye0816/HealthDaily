@@ -100,7 +100,9 @@ struct TiantianHealthApp: App {
     private let modelContainer: ModelContainer
 
     init() {
-        let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
+        let arguments = ProcessInfo.processInfo.arguments
+        let isUITesting = arguments.contains("-ui-testing")
+        let isWeightChartTesting = arguments.contains("-ui-testing-weight-chart")
         if isUITesting {
             UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding")
             UserDefaults.standard.removeObject(forKey: "lastDismissedReviewWeek")
@@ -117,6 +119,33 @@ struct TiantianHealthApp: App {
             ])
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
             modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+
+            if isWeightChartTesting {
+                let calendar = Calendar.current
+                let today = calendar.startOfDay(for: .now)
+                let birthDate = calendar.date(byAdding: .year, value: -30, to: today) ?? today
+                let profile = UserProfile(
+                    sex: .male,
+                    birthDate: birthDate,
+                    heightCM: 178,
+                    weightUnit: .kg,
+                    initialWeightKG: 81,
+                    targetWeightKG: 75,
+                    pace: .gentle,
+                    averageSteps: 5_000,
+                    baselineTDEE: 2_150
+                )
+                modelContainer.mainContext.insert(profile)
+                for index in 0..<7 {
+                    let date = calendar.date(byAdding: .day, value: index - 6, to: today) ?? today
+                    modelContainer.mainContext.insert(
+                        WeightEntry(date: date, weightKG: 81 - Double(index) * (0.5 / 6))
+                    )
+                }
+                try modelContainer.mainContext.save()
+                UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+                UserDefaults.standard.set(true, forKey: "didMigrateActualExerciseV1")
+            }
         } catch {
             fatalError("Unable to create local data store: \(error)")
         }
