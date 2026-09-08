@@ -17,8 +17,11 @@ struct ProgressView: View {
     private var points: [WeightPoint] { HealthCalculator.trendPoints(from: weights) }
     private var latestWeight: Double { weights.last?.weightKG ?? profile?.initialWeightKG ?? 0 }
     private var unit: WeightUnit { profile?.weightUnit ?? .kg }
+    private var highestWeightKG: Double? { points.map(\.rawKG).max() }
+    private var targetWeightKG: Double? { profile?.targetWeightKG }
     private var chartDisplayDomain: ClosedRange<Double> {
-        guard let kilograms = HealthCalculator.weightChartDomain(points: points) else { return 0...1 }
+        let references = [targetWeightKG].compactMap { $0 }
+        guard let kilograms = HealthCalculator.weightChartDomain(points: points, referenceValues: references) else { return 0...1 }
         return unit.displayValue(fromKilograms: kilograms.lowerBound)...unit.displayValue(fromKilograms: kilograms.upperBound)
     }
     private var selectedWeightPoint: WeightPoint? {
@@ -107,7 +110,7 @@ struct ProgressView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("体重方向").font(.headline)
+                        Text("体重趋势").font(.headline)
                         Text(points.count <= 1 ? "从第一个点开始也有意义" : "曲线连接每次记录 · 按住滑动查看详情")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -117,6 +120,36 @@ struct ProgressView: View {
                     EmptyStateView(symbol: "chart.xyaxis.line", title: "还没有体重记录", message: "添加第一条记录，就能看到目标距离。")
                 } else {
                     Chart {
+                        if let highestWeightKG {
+                            RuleMark(
+                                y: .value("区间最高", unit.displayValue(fromKilograms: highestWeightKG))
+                            )
+                            .foregroundStyle(AppTheme.orange.opacity(0.72))
+                            .lineStyle(StrokeStyle(lineWidth: 1.4, dash: [6, 5]))
+                            .annotation(position: .top, alignment: .leading, spacing: 4) {
+                                referenceLineLabel(
+                                    "区间最高",
+                                    kilograms: highestWeightKG,
+                                    color: AppTheme.orange
+                                )
+                            }
+                        }
+
+                        if let targetWeightKG {
+                            RuleMark(
+                                y: .value("目标体重", unit.displayValue(fromKilograms: targetWeightKG))
+                            )
+                            .foregroundStyle(AppTheme.deepGreen.opacity(0.68))
+                            .lineStyle(StrokeStyle(lineWidth: 1.4, dash: [4, 5]))
+                            .annotation(position: .bottom, alignment: .trailing, spacing: 4) {
+                                referenceLineLabel(
+                                    "目标",
+                                    kilograms: targetWeightKG,
+                                    color: AppTheme.deepGreen
+                                )
+                            }
+                        }
+
                         ForEach(points) { point in
                             LineMark(
                                 x: .value("日期", point.date),
@@ -211,6 +244,15 @@ struct ProgressView: View {
                 .stroke(AppTheme.divider, lineWidth: 1)
         }
         .shadow(color: AppTheme.deepGreen.opacity(0.12), radius: 8, y: 3)
+    }
+
+    private func referenceLineLabel(_ title: String, kilograms: Double, color: Color) -> some View {
+        Text("\(title) \(unit.displayValue(fromKilograms: kilograms).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+            .font(.caption2.weight(.semibold).monospacedDigit())
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(AppTheme.surface.opacity(0.94), in: Capsule())
     }
 
     private func chartAxisLabelAnchor(for date: Date) -> UnitPoint {

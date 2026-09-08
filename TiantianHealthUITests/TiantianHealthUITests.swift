@@ -53,6 +53,14 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.buttons["记录饮食"].exists)
         XCTAssertFalse(app.staticTexts["体重"].exists)
 
+        let breakfastRow = app.buttons["meal-row-早餐"]
+        XCTAssertTrue(breakfastRow.waitForExistence(timeout: 3))
+        for _ in 0..<2 where !breakfastRow.isHittable { app.swipeUp() }
+        XCTAssertTrue(breakfastRow.isHittable)
+        breakfastRow.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["新建食物"].waitForExistence(timeout: 4))
+        app.buttons["关闭"].tap()
+
         app.buttons["add-exercise"].tap()
         XCTAssertTrue(app.staticTexts["记录运动"].waitForExistence(timeout: 4))
         app.textFields["exercise-type"].tap()
@@ -112,7 +120,7 @@ final class TiantianHealthUITests: XCTestCase {
         app.navigationBars.buttons["本周预算"].tap()
         XCTAssertTrue(app.navigationBars["本周预算"].waitForExistence(timeout: 4))
 
-        let pastBudgetDay = app.buttons["budget-day-past"]
+        let pastBudgetDay = app.buttons.matching(identifier: "budget-day-past").firstMatch
         XCTAssertTrue(pastBudgetDay.waitForExistence(timeout: 3))
         pastBudgetDay.tap()
         XCTAssertTrue(app.staticTexts["饮食与运动明细"].waitForExistence(timeout: 4))
@@ -126,7 +134,8 @@ final class TiantianHealthUITests: XCTestCase {
 
         app.buttons["daily-add-早餐"].tap()
         XCTAssertTrue(app.buttons["选择 煎鸡胸"].waitForExistence(timeout: 4))
-        app.buttons["选择 煎鸡胸"].tap()
+        let foodPresetRow = app.buttons["选择 煎鸡胸"]
+        foodPresetRow.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.5)).tap()
         app.buttons["加入早餐"].tap()
         XCTAssertTrue(app.staticTexts["煎鸡胸"].waitForExistence(timeout: 4))
         capture("09-past-day-backfill")
@@ -135,7 +144,7 @@ final class TiantianHealthUITests: XCTestCase {
 
         app.tabBars.buttons["趋势"].tap()
         XCTAssertTrue(app.navigationBars["趋势"].waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["体重方向"].exists)
+        XCTAssertTrue(app.staticTexts["体重趋势"].exists)
         app.navigationBars["趋势"].buttons["记录"].tap()
         XCTAssertTrue(app.staticTexts["记录体重"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.buttons["保存体重"].isHittable)

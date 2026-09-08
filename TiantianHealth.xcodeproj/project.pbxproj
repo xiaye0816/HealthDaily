@@ -25,6 +25,15 @@
 		A10000000000000000000010 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* PrivacyInfo.xcprivacy */; };
 		A10000000000000000000011 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* LaunchScreen.storyboard */; };
 		A10000000000000000000012 /* LaunchSplashLockup.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* LaunchSplashLockup.png */; };
+		A10000000000000000000013 /* WidgetCalorieSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* WidgetCalorieSnapshot.swift */; };
+		A10000000000000000000014 /* FoodPresetOrdering.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* FoodPresetOrdering.swift */; };
+		A10000000000000000000015 /* WidgetSnapshotPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* WidgetSnapshotPublisher.swift */; };
+		A10000000000000000000016 /* TiantianHealthWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* TiantianHealthWidget.swift */; };
+		A10000000000000000000017 /* WidgetCalorieSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* WidgetCalorieSnapshot.swift */; };
+		A10000000000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* PrivacyInfo.xcprivacy */; };
+		A10000000000000000000019 /* TiantianHealthWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001D /* TiantianHealthWidget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A1000000000000000000001A /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001E /* WidgetKit.framework */; };
+		A1000000000000000000001B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001F /* SwiftUI.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,7 +51,28 @@
 			remoteGlobalIDString = A50000000000000000000001;
 			remoteInfo = TiantianHealth;
 		};
+		A30000000000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000004;
+			remoteInfo = TiantianHealthWidget;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AD0000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000019 /* TiantianHealthWidget.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A20000000000000000000001 /* TiantianHealthApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiantianHealthApp.swift; sourceTree = "<group>"; };
@@ -66,12 +96,23 @@
 		A20000000000000000000013 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A20000000000000000000014 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		A20000000000000000000015 /* LaunchSplashLockup.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LaunchSplashLockup.png; sourceTree = "<group>"; };
+		A20000000000000000000016 /* WidgetCalorieSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCalorieSnapshot.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 /* FoodPresetOrdering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPresetOrdering.swift; sourceTree = "<group>"; };
+		A20000000000000000000018 /* WidgetSnapshotPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotPublisher.swift; sourceTree = "<group>"; };
+		A20000000000000000000019 /* TiantianHealthWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiantianHealthWidget.swift; sourceTree = "<group>"; };
+		A2000000000000000000001A /* TiantianHealth.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TiantianHealth.entitlements; sourceTree = "<group>"; };
+		A2000000000000000000001B /* TiantianHealthWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TiantianHealthWidget.entitlements; sourceTree = "<group>"; };
+		A2000000000000000000001C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000000000000000000001D /* TiantianHealthWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TiantianHealthWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000001E /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		A2000000000000000000001F /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A60000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A60000000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A60000000000000000000003 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A60000000000000000000004 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000001A /* WidgetKit.framework in Frameworks */, A1000000000000000000001B /* SwiftUI.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -79,8 +120,10 @@
 			isa = PBXGroup;
 			children = (
 				A70000000000000000000002 /* TiantianHealth */,
+				A7000000000000000000000B /* TiantianHealthWidget */,
 				A70000000000000000000008 /* TiantianHealthTests */,
 				A7000000000000000000000A /* TiantianHealthUITests */,
+				A7000000000000000000000C /* Frameworks */,
 				A70000000000000000000009 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -91,19 +134,21 @@
 				A70000000000000000000003 /* App */,
 				A70000000000000000000004 /* Models */,
 				A70000000000000000000005 /* Services */,
+				A7000000000000000000000D /* Shared */,
 				A70000000000000000000006 /* Design */,
 				A70000000000000000000007 /* Views */,
 				A2000000000000000000000D /* Assets.xcassets */,
 				A20000000000000000000014 /* LaunchScreen.storyboard */,
 				A20000000000000000000015 /* LaunchSplashLockup.png */,
 				A20000000000000000000013 /* PrivacyInfo.xcprivacy */,
+				A2000000000000000000001A /* TiantianHealth.entitlements */,
 			);
 			path = TiantianHealth;
 			sourceTree = "<group>";
 		};
 		A70000000000000000000003 /* App */ = {isa = PBXGroup; children = (A20000000000000000000001 /* TiantianHealthApp.swift */,); path = App; sourceTree = "<group>"; };
 		A70000000000000000000004 /* Models */ = {isa = PBXGroup; children = (A20000000000000000000002 /* Models.swift */,); path = Models; sourceTree = "<group>"; };
-		A70000000000000000000005 /* Services */ = {isa = PBXGroup; children = (A20000000000000000000003 /* HealthCalculator.swift */,); path = Services; sourceTree = "<group>"; };
+		A70000000000000000000005 /* Services */ = {isa = PBXGroup; children = (A20000000000000000000003 /* HealthCalculator.swift */, A20000000000000000000017 /* FoodPresetOrdering.swift */, A20000000000000000000018 /* WidgetSnapshotPublisher.swift */,); path = Services; sourceTree = "<group>"; };
 		A70000000000000000000006 /* Design */ = {isa = PBXGroup; children = (A20000000000000000000004 /* DesignSystem.swift */,); path = Design; sourceTree = "<group>"; };
 		A70000000000000000000007 /* Views */ = {
 			isa = PBXGroup;
@@ -122,16 +167,19 @@
 		};
 		A70000000000000000000008 /* TiantianHealthTests */ = {isa = PBXGroup; children = (A2000000000000000000000E /* HealthCalculatorTests.swift */,); path = TiantianHealthTests; sourceTree = "<group>"; };
 		A7000000000000000000000A /* TiantianHealthUITests */ = {isa = PBXGroup; children = (A20000000000000000000011 /* TiantianHealthUITests.swift */,); path = TiantianHealthUITests; sourceTree = "<group>"; };
-		A70000000000000000000009 /* Products */ = {isa = PBXGroup; children = (A2000000000000000000000F /* TiantianHealth.app */, A20000000000000000000010 /* TiantianHealthTests.xctest */, A20000000000000000000012 /* TiantianHealthUITests.xctest */,); name = Products; sourceTree = "<group>"; };
+		A70000000000000000000009 /* Products */ = {isa = PBXGroup; children = (A2000000000000000000000F /* TiantianHealth.app */, A2000000000000000000001D /* TiantianHealthWidget.appex */, A20000000000000000000010 /* TiantianHealthTests.xctest */, A20000000000000000000012 /* TiantianHealthUITests.xctest */,); name = Products; sourceTree = "<group>"; };
+		A7000000000000000000000B /* TiantianHealthWidget */ = {isa = PBXGroup; children = (A20000000000000000000019 /* TiantianHealthWidget.swift */, A2000000000000000000001B /* TiantianHealthWidget.entitlements */, A2000000000000000000001C /* Info.plist */,); path = TiantianHealthWidget; sourceTree = "<group>"; };
+		A7000000000000000000000C /* Frameworks */ = {isa = PBXGroup; children = (A2000000000000000000001E /* WidgetKit.framework */, A2000000000000000000001F /* SwiftUI.framework */,); name = Frameworks; sourceTree = "<group>"; };
+		A7000000000000000000000D /* Shared */ = {isa = PBXGroup; children = (A20000000000000000000016 /* WidgetCalorieSnapshot.swift */,); path = Shared; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		A50000000000000000000001 /* TiantianHealth */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A80000000000000000000002 /* Build configuration list for PBXNativeTarget "TiantianHealth" */;
-			buildPhases = (A90000000000000000000001 /* Sources */, A60000000000000000000001 /* Frameworks */, AA0000000000000000000001 /* Resources */,);
+			buildPhases = (A90000000000000000000001 /* Sources */, A60000000000000000000001 /* Frameworks */, AA0000000000000000000001 /* Resources */, AD0000000000000000000001 /* Embed App Extensions */,);
 			buildRules = ();
-			dependencies = ();
+			dependencies = (AB0000000000000000000003 /* PBXTargetDependency */,);
 			name = TiantianHealth;
 			productName = TiantianHealth;
 			productReference = A2000000000000000000000F /* TiantianHealth.app */;
@@ -159,6 +207,17 @@
 			productReference = A20000000000000000000012 /* TiantianHealthUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		A50000000000000000000004 /* TiantianHealthWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000005 /* Build configuration list for PBXNativeTarget "TiantianHealthWidget" */;
+			buildPhases = (A90000000000000000000004 /* Sources */, A60000000000000000000004 /* Frameworks */, AA0000000000000000000004 /* Resources */,);
+			buildRules = ();
+			dependencies = ();
+			name = TiantianHealthWidget;
+			productName = TiantianHealthWidget;
+			productReference = A2000000000000000000001D /* TiantianHealthWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -172,6 +231,7 @@
 					A50000000000000000000001 = {CreatedOnToolsVersion = 16.2;};
 					A50000000000000000000002 = {CreatedOnToolsVersion = 16.2; TestTargetID = A50000000000000000000001;};
 					A50000000000000000000003 = {CreatedOnToolsVersion = 16.2; TestTargetID = A50000000000000000000001;};
+					A50000000000000000000004 = {CreatedOnToolsVersion = 26.0;};
 				};
 			};
 			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "TiantianHealth" */;
@@ -183,7 +243,7 @@
 			productRefGroup = A70000000000000000000009 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (A50000000000000000000001 /* TiantianHealth */, A50000000000000000000002 /* TiantianHealthTests */, A50000000000000000000003 /* TiantianHealthUITests */,);
+			targets = (A50000000000000000000001 /* TiantianHealth */, A50000000000000000000004 /* TiantianHealthWidget */, A50000000000000000000002 /* TiantianHealthTests */, A50000000000000000000003 /* TiantianHealthUITests */,);
 		};
 /* End PBXProject section */
 
@@ -191,6 +251,7 @@
 		AA0000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000D /* Assets.xcassets in Resources */, A10000000000000000000010 /* PrivacyInfo.xcprivacy in Resources */, A10000000000000000000011 /* LaunchScreen.storyboard in Resources */, A10000000000000000000012 /* LaunchSplashLockup.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		AA0000000000000000000004 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000018 /* PrivacyInfo.xcprivacy in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -210,27 +271,34 @@
 				A1000000000000000000000A /* BudgetView.swift in Sources */,
 				A1000000000000000000000B /* ProgressView.swift in Sources */,
 				A1000000000000000000000C /* MeView.swift in Sources */,
+				A10000000000000000000013 /* WidgetCalorieSnapshot.swift in Sources */,
+				A10000000000000000000014 /* FoodPresetOrdering.swift in Sources */,
+				A10000000000000000000015 /* WidgetSnapshotPublisher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A90000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000E /* HealthCalculatorTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 		A90000000000000000000003 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000F /* TiantianHealthUITests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A90000000000000000000004 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000016 /* TiantianHealthWidget.swift in Sources */, A10000000000000000000017 /* WidgetCalorieSnapshot.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
 		AB0000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A50000000000000000000001 /* TiantianHealth */; targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */; };
 		AB0000000000000000000002 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A50000000000000000000001 /* TiantianHealth */; targetProxy = A30000000000000000000002 /* PBXContainerItemProxy */; };
+		AB0000000000000000000003 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A50000000000000000000004 /* TiantianHealthWidget */; targetProxy = A30000000000000000000003 /* PBXContainerItemProxy */; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AC0000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_CXX_LANGUAGE_STANDARD = "gnu++20"; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; CLANG_WARN_BOOL_CONVERSION = YES; CLANG_WARN_CONSTANT_CONVERSION = YES; CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES; CLANG_WARN_DOCUMENTATION_COMMENTS = YES; CLANG_WARN_EMPTY_BODY = YES; CLANG_WARN_ENUM_CONVERSION = YES; CLANG_WARN_INFINITE_RECURSION = YES; CLANG_WARN_INT_CONVERSION = YES; CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES; CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES; CLANG_WARN_OBJC_LITERAL_CONVERSION = YES; CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES; CLANG_WARN_RANGE_LOOP_ANALYSIS = YES; CLANG_WARN_STRICT_PROTOTYPES = YES; CLANG_WARN_SUSPICIOUS_MOVE = YES; CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)",); GCC_WARN_64_TO_32_BIT_CONVERSION = YES; GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR; GCC_WARN_UNDECLARED_SELECTOR = YES; GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE; GCC_WARN_UNUSED_FUNCTION = YES; GCC_WARN_UNUSED_VARIABLE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; MTL_FAST_MATH = YES; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
 		AC0000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_CXX_LANGUAGE_STANDARD = "gnu++20"; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; CLANG_WARN_BOOL_CONVERSION = YES; CLANG_WARN_CONSTANT_CONVERSION = YES; CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES; CLANG_WARN_DOCUMENTATION_COMMENTS = YES; CLANG_WARN_EMPTY_BODY = YES; CLANG_WARN_ENUM_CONVERSION = YES; CLANG_WARN_INFINITE_RECURSION = YES; CLANG_WARN_INT_CONVERSION = YES; CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES; CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES; CLANG_WARN_OBJC_LITERAL_CONVERSION = YES; CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES; CLANG_WARN_RANGE_LOOP_ANALYSIS = YES; CLANG_WARN_STRICT_PROTOTYPES = YES; CLANG_WARN_SUSPICIOUS_MOVE = YES; CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; GCC_WARN_64_TO_32_BIT_CONVERSION = YES; GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR; GCC_WARN_UNDECLARED_SELECTOR = YES; GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE; GCC_WARN_UNUSED_FUNCTION = YES; GCC_WARN_UNUSED_VARIABLE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; MTL_FAST_MATH = YES; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; VALIDATE_PRODUCT = YES; }; name = Release; };
-		AC0000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; DEVELOPMENT_ASSET_PATHS = ""; DEVELOPMENT_TEAM = 4TL62DTQQM; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = TiantianHealth/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
-		AC0000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; DEVELOPMENT_ASSET_PATHS = ""; DEVELOPMENT_TEAM = 4TL62DTQQM; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = TiantianHealth/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		AC0000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_ENTITLEMENTS = TiantianHealth/TiantianHealth.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 6; DEVELOPMENT_ASSET_PATHS = ""; DEVELOPMENT_TEAM = 4TL62DTQQM; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = TiantianHealth/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		AC0000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_ENTITLEMENTS = TiantianHealth/TiantianHealth.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 6; DEVELOPMENT_ASSET_PATHS = ""; DEVELOPMENT_TEAM = 4TL62DTQQM; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = TiantianHealth/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
 		AC0000000000000000000005 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 4TL62DTQQM; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TiantianHealth.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TiantianHealth"; }; name = Debug; };
 		AC0000000000000000000006 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 4TL62DTQQM; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TiantianHealth.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TiantianHealth"; }; name = Release; };
 		AC0000000000000000000007 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 4TL62DTQQM; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = TiantianHealth; }; name = Debug; };
 		AC0000000000000000000008 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 4TL62DTQQM; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = TiantianHealth; }; name = Release; };
+		AC0000000000000000000009 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = TiantianHealthWidget/TiantianHealthWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 6; DEVELOPMENT_TEAM = 4TL62DTQQM; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = TiantianHealthWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		AC000000000000000000000A /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = TiantianHealthWidget/TiantianHealthWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 6; DEVELOPMENT_TEAM = 4TL62DTQQM; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = TiantianHealthWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantianhealth.widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -238,6 +306,7 @@
 		A80000000000000000000002 /* Build configuration list for PBXNativeTarget "TiantianHealth" */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000003 /* Debug */, AC0000000000000000000004 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A80000000000000000000003 /* Build configuration list for PBXNativeTarget "TiantianHealthTests" */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000005 /* Debug */, AC0000000000000000000006 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A80000000000000000000004 /* Build configuration list for PBXNativeTarget "TiantianHealthUITests" */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000007 /* Debug */, AC0000000000000000000008 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A80000000000000000000005 /* Build configuration list for PBXNativeTarget "TiantianHealthWidget" */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000009 /* Debug */, AC000000000000000000000A /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = A40000000000000000000001 /* Project object */;

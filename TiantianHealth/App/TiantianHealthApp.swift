@@ -57,6 +57,22 @@ final class AppRouter: ObservableObject {
     func clearPendingShortcut() {
         pendingQuickAction = nil
     }
+
+    @discardableResult
+    func open(url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "tiantianhealth" else { return false }
+        let destination = (url.host?.isEmpty == false ? url.host : url.pathComponents.last)?.lowercased()
+        switch destination {
+        case "today":
+            selectedTab = .today
+            return true
+        case "budget":
+            selectedTab = .budget
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -161,14 +177,28 @@ struct TiantianHealthApp: App {
 
 struct RootView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("didMigrateActualExerciseV1") private var didMigrateActualExerciseV1 = false
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
     @Query private var budgets: [DailyBudget]
+    @Query private var foodLogs: [FoodLogEntry]
+    @Query private var exerciseLogs: [ExerciseLogEntry]
     @StateObject private var router = AppRouter.shared
     @State private var isShowingSplash = true
     @State private var splashOpacity = 1.0
+
+    private var widgetSnapshotSource: WidgetSnapshotSource {
+        WidgetSnapshotSource(
+            isOnboarded: hasCompletedOnboarding,
+            profile: profiles.first,
+            latestWeightKG: weights.first?.weightKG,
+            budgets: budgets,
+            foodLogs: foodLogs,
+            exerciseLogs: exerciseLogs
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -207,6 +237,17 @@ struct RootView: View {
         }
         .task(id: profiles.first?.id) {
             migrateFromFixedWorkoutBaselineIfNeeded()
+        }
+        .task(id: widgetSnapshotSource) {
+            WidgetSnapshotPublisher.publish(widgetSnapshotSource)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            WidgetSnapshotPublisher.publish(widgetSnapshotSource)
+        }
+        .onOpenURL { url in
+            guard hasCompletedOnboarding, !profiles.isEmpty else { return }
+            router.open(url: url)
         }
     }
 

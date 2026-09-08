@@ -47,6 +47,23 @@ struct BrandButtonStyle: ButtonStyle {
     }
 }
 
+struct PressableRowButtonStyle: ButtonStyle {
+    var cornerRadius: CGFloat = 16
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(configuration.isPressed ? AppTheme.green.opacity(0.075) : .clear)
+                    .allowsHitTesting(false)
+            }
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 struct RingProgressView: View {
     let progress: Double
     let consumed: Double

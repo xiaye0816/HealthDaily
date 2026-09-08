@@ -66,6 +66,17 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(domain?.upperBound ?? 0, 82.2, accuracy: 0.001)
     }
 
+    func testWeightChartDomainIncludesTargetReferenceLine() {
+        let points = [
+            WeightPoint(id: UUID(), date: .now, rawKG: 80.5, trendKG: 80.5),
+            WeightPoint(id: UUID(), date: .now, rawKG: 81, trendKG: 80.875)
+        ]
+        let domain = HealthCalculator.weightChartDomain(points: points, referenceValues: [75])
+
+        XCTAssertLessThan(domain?.lowerBound ?? .infinity, 75)
+        XCTAssertGreaterThan(domain?.upperBound ?? 0, 81)
+    }
+
     func testWeightChartAxisUsesActualRecordDates() {
         let start = Date(timeIntervalSince1970: 1_000_000)
         let points = (0..<7).map { index in
@@ -134,6 +145,85 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(CalorieMath.kilocalories(fromKilojoules: kilojoules), 250, accuracy: 0.001)
     }
 
+    func testFoodPresetsSortByActualRecentUseThenCreationTime() {
+        let now = Date.now
+        let olderUsed = FoodPreset(name: "鸡蛋", baseQuantity: 1, unit: .item, calories: 75)
+        olderUsed.createdAt = now.addingTimeInterval(-500)
+        olderUsed.lastUsedAt = now.addingTimeInterval(-100)
+        let newestUsed = FoodPreset(name: "酸奶", baseQuantity: 1, unit: .serving, calories: 120)
+        newestUsed.createdAt = now.addingTimeInterval(-800)
+        newestUsed.lastUsedAt = now
+        let olderUnused = FoodPreset(name: "米饭", baseQuantity: 1, unit: .bowl, calories: 230)
+        olderUnused.createdAt = now.addingTimeInterval(-300)
+        let newestUnused = FoodPreset(name: "苹果", baseQuantity: 1, unit: .item, calories: 90)
+        newestUnused.createdAt = now.addingTimeInterval(-10)
+
+        let result = FoodPresetOrdering.sortedByRecentUse([olderUnused, olderUsed, newestUnused, newestUsed])
+        XCTAssertEqual(result.map(\.id), [newestUsed.id, olderUsed.id, newestUnused.id, olderUnused.id])
+    }
+
+    func testWidgetMetricsIncludeExerciseAndUseFallbackForMissingDays() {
+        let calendar = Calendar.current
+        let reference = calendar.date(from: DateComponents(year: 2026, month: 9, day: 8, hour: 10))!
+        let monday = DateTools.startOfWeek(containing: reference)
+        let tuesday = calendar.date(byAdding: .day, value: 1, to: monday)!
+        let snapshot = WidgetCalorieSnapshot(
+            generatedAt: reference,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_800,
+            days: [
+                WidgetCalorieDay(date: monday, baseBudget: 1_700, exercise: 0, consumed: 1_600),
+                WidgetCalorieDay(date: tuesday, baseBudget: 1_700, exercise: 250, consumed: 1_400)
+            ]
+        )
+
+        let metrics = snapshot.metrics(on: reference, calendar: calendar)
+        XCTAssertEqual(metrics.todayAvailable, 1_950, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayRemaining, 550, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekBaseBudget, 12_400, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekExercise, 250, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekConsumed, 3_000, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekRemaining, 9_650, accuracy: 0.001)
+    }
+
+    func testWidgetMetricsExposeOverageWithoutChangingStoredValues() {
+        let now = Date.now
+        let snapshot = WidgetCalorieSnapshot(
+            generatedAt: now,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_700,
+            days: [WidgetCalorieDay(date: now, baseBudget: 1_700, exercise: 100, consumed: 2_000)]
+        )
+
+        XCTAssertEqual(snapshot.metrics(on: now).todayRemaining, -200, accuracy: 0.001)
+    }
+
+    func testWidgetSnapshotStoreDoesNotRewriteUnchangedContentAndCanClear() {
+        let suiteName = "WidgetSnapshotStoreTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = WidgetSnapshotStore(defaults: defaults)
+        let first = WidgetCalorieSnapshot(
+            generatedAt: .now,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_800,
+            days: []
+        )
+        let sameContent = WidgetCalorieSnapshot(
+            generatedAt: .now.addingTimeInterval(30),
+            isOnboarded: true,
+            fallbackDailyBudget: 1_800,
+            days: []
+        )
+
+        XCTAssertTrue(store.save(first))
+        XCTAssertFalse(store.save(sameContent))
+        XCTAssertEqual(store.load()?.fallbackDailyBudget, 1_800)
+        XCTAssertTrue(store.clear())
+        XCTAssertNil(store.load())
+        XCTAssertFalse(store.clear())
+    }
+
     @MainActor
     func testHomeScreenQuickActionRoutes() {
         let router = AppRouter.shared
@@ -155,5 +245,16 @@ final class HealthCalculatorTests: XCTestCase {
 
         XCTAssertFalse(router.enqueueShortcut(type: "com.shaoguoqing.tiantianhealth.unknown"))
         router.clearPendingShortcut()
+    }
+
+    @MainActor
+    func testWidgetDeepLinksSelectTheExpectedTab() {
+        let router = AppRouter.shared
+        XCTAssertTrue(router.open(url: URL(string: "tiantianhealth://today")!))
+        XCTAssertEqual(router.selectedTab, .today)
+        XCTAssertTrue(router.open(url: URL(string: "tiantianhealth://budget")!))
+        XCTAssertEqual(router.selectedTab, .budget)
+        XCTAssertFalse(router.open(url: URL(string: "https://example.com/budget")!))
+        XCTAssertFalse(router.open(url: URL(string: "tiantianhealth://unknown")!))
     }
 }

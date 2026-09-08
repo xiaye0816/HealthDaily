@@ -112,8 +112,8 @@ enum HealthCalculator {
         }
     }
 
-    static func weightChartDomain(points: [WeightPoint]) -> ClosedRange<Double>? {
-        let values = points.flatMap { [$0.rawKG, $0.trendKG] }
+    static func weightChartDomain(points: [WeightPoint], referenceValues: [Double] = []) -> ClosedRange<Double>? {
+        let values = (points.flatMap { [$0.rawKG, $0.trendKG] } + referenceValues)
             .filter { $0.isFinite && $0 > 0 }
         guard let minimum = values.min(), let maximum = values.max() else { return nil }
 

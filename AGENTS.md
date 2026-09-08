@@ -12,6 +12,7 @@
 - 默认优先使用不依赖 PPQ 的离线 Ad Hoc 签名；若只能使用开发签名，必须先确认描述文件、设备、证书、entitlements 和 PPQ 状态，并在覆盖安装前准备好可回退的离线包。
 - “VPN 与设备管理”中没有 Developer App 条目不等于安装异常。Ad Hoc 包通常不会显示该条目；遇到错误时先判断签名类型，不得反复让用户寻找不存在的入口。
 - 安装前用 `security cms -D`、`codesign -d --entitlements :-` 和 `codesign --verify --deep --strict` 检查主 App 与所有扩展。主 App 和 Widget 的 Team、App Group、Bundle ID 前缀必须一致，嵌入描述文件必须未过期并包含当前设备。
+- Xcode 26 的 Debug 真机产物可能包含主 App、Widget 内的 `*.debug.dylib` 与 `__preview.dylib`。手工签名时必须先枚举并签署包内所有 Mach-O 文件，再按“内层 dylib/framework → Widget Extension → 主 App”顺序签名；禁止只签最外层 `.appex` 和 `.app`。真机交付优先构建 Release，以减少 Debug 注入库导致的启动闪退。
 - 安装后不能以安装命令成功作为完成标准。必须启动 App、确认进程运行，并再次导出数据容器，检查 SQLite/SwiftData 完整性，对比安装前后的记录数量、ID 和关键值。
 - 如果新包启动失败，立即使用相同 Bundle ID 的已验证离线包覆盖回退，并再次核对数据；不得卸载重装。
 - 所有临时归档、DerivedData 和测试模拟器都必须是本任务专属。完成后只清理本任务产生的内容，不得触碰其他 App 或任务的构建、模拟器和签名资产。

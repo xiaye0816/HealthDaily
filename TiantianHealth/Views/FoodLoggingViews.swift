@@ -4,7 +4,7 @@ import SwiftData
 struct FoodPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \FoodPreset.lastUsedAt, order: .reverse) private var presets: [FoodPreset]
+    @Query private var presets: [FoodPreset]
 
     let meal: MealType
     let date: Date
@@ -13,10 +13,13 @@ struct FoodPickerView: View {
     @State private var showingNewFood = false
     @State private var showingQuickCalories = false
     @State private var addTrigger = false
+    @State private var selectionTapFeedback = 0
+    @State private var saveErrorMessage: String?
 
     private var filteredPresets: [FoodPreset] {
-        guard !searchText.isEmpty else { return presets }
-        return presets.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        let ordered = FoodPresetOrdering.sortedByRecentUse(presets)
+        guard !searchText.isEmpty else { return ordered }
+        return ordered.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
     private var selectedTotal: Double {
         presets.reduce(0) { result, preset in
@@ -85,6 +88,15 @@ struct FoodPickerView: View {
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(30)
         .sensoryFeedback(.success, trigger: addTrigger)
+        .sensoryFeedback(.selection, trigger: selectionTapFeedback)
+        .alert("没有保存成功", isPresented: Binding(
+            get: { saveErrorMessage != nil },
+            set: { if !$0 { saveErrorMessage = nil } }
+        )) {
+            Button("知道了", role: .cancel) { saveErrorMessage = nil }
+        } message: {
+            Text(saveErrorMessage ?? "请稍后再试，已选择的食物仍然保留。")
+        }
     }
 
     private var quickActions: some View {
@@ -110,42 +122,84 @@ struct FoodPickerView: View {
 
     private func presetRow(_ preset: FoodPreset) -> some View {
         let count = selectedCounts[preset.id] ?? 0
-        return HStack(spacing: 12) {
-            Button {
-                withAnimation { selectedCounts[preset.id] = count == 0 ? 1 : nil }
-            } label: {
-                Image(systemName: count > 0 ? "checkmark.circle.fill" : "circle")
-                    .font(.title3).foregroundStyle(count > 0 ? AppTheme.green : Color.secondary.opacity(0.35))
-            }
-            .buttonStyle(.plain)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(preset.name).font(.body.weight(.semibold))
-                Text(presetDescription(preset))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if count > 0 {
-                HStack(spacing: 9) {
-                    countButton("minus") {
-                        withAnimation {
-                            if count <= 1 { selectedCounts[preset.id] = nil }
-                            else { selectedCounts[preset.id] = count - 1 }
-                        }
+        return Group {
+            if count == 0 {
+                Button {
+                    setCount(1, for: preset)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "circle")
+                            .font(.title3)
+                            .foregroundStyle(Color.secondary.opacity(0.35))
+                        presetLabel(preset)
+                        Spacer()
+                        Image(systemName: "plus")
+                            .font(.headline)
+                            .frame(width: 36, height: 36)
+                            .background(AppTheme.green.opacity(0.12), in: Circle())
                     }
-                    Text("\(count)").font(.subheadline.bold().monospacedDigit()).frame(minWidth: 16)
-                    countButton("plus") { withAnimation { selectedCounts[preset.id] = count + 1 } }
+                    .padding(15)
+                    .frame(maxWidth: .infinity)
+                    .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(AppTheme.divider.opacity(0.75), lineWidth: 1)
+                    }
                 }
-            } else {
-                Button { withAnimation { selectedCounts[preset.id] = 1 } } label: {
-                    Image(systemName: "plus").font(.headline).frame(width: 36, height: 36)
-                        .background(AppTheme.green.opacity(0.12), in: Circle())
-                }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableRowButtonStyle(cornerRadius: 18))
                 .accessibilityLabel("选择 \(preset.name)")
+                .accessibilityHint("添加一份到本次记录")
+            } else {
+                HStack(spacing: 9) {
+                    Button {
+                        setCount(nil, for: preset)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(AppTheme.green)
+                            presetLabel(preset)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressableRowButtonStyle(cornerRadius: 14))
+                    .accessibilityLabel("取消选择 \(preset.name)")
+                    countButton("minus") { setCount(count - 1, for: preset) }
+                    Text("\(count)").font(.subheadline.bold().monospacedDigit()).frame(minWidth: 16)
+                    countButton("plus") { setCount(count + 1, for: preset) }
+                }
+                .padding(15)
+                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(AppTheme.green.opacity(0.28), lineWidth: 1)
+                }
             }
         }
-        .padding(15)
-        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func presetLabel(_ preset: FoodPreset) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(preset.name)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AppTheme.textPrimary)
+            Text(presetDescription(preset))
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+    }
+
+    private func setCount(_ newValue: Int?, for preset: FoodPreset) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if let newValue, newValue > 0 {
+                selectedCounts[preset.id] = newValue
+            } else {
+                selectedCounts[preset.id] = nil
+            }
+        }
+        selectionTapFeedback += 1
     }
 
     private func countButton(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -153,7 +207,7 @@ struct FoodPickerView: View {
             Image(systemName: symbol).font(.caption.bold()).frame(width: 30, height: 30)
                 .background(AppTheme.green.opacity(0.11), in: Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableRowButtonStyle(cornerRadius: 15))
     }
 
     private func presetDescription(_ preset: FoodPreset) -> String {
@@ -182,6 +236,7 @@ struct FoodPickerView: View {
     }
 
     private func addSelected() {
+        let usedAt = Date.now
         for preset in presets {
             let count = selectedCounts[preset.id] ?? 0
             guard count > 0 else { continue }
@@ -194,11 +249,16 @@ struct FoodPickerView: View {
                 unit: preset.unit.rawValue,
                 calories: preset.calories * Double(count)
             ))
-            preset.lastUsedAt = .now
+            preset.lastUsedAt = usedAt
         }
-        try? modelContext.save()
-        addTrigger.toggle()
-        dismiss()
+        do {
+            try modelContext.save()
+            addTrigger.toggle()
+            dismiss()
+        } catch {
+            modelContext.rollback()
+            saveErrorMessage = "这次记录没有写入本机，请重试。"
+        }
     }
 }
 

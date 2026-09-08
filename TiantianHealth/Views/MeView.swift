@@ -109,6 +109,7 @@ struct MeView: View {
             lastDismissedReviewWeek = ""
             didMigrateActualExerciseV1 = false
             router.clearPendingShortcut()
+            WidgetSnapshotPublisher.clear()
             withAnimation(.easeInOut(duration: 0.3)) {
                 hasCompletedOnboarding = false
             }

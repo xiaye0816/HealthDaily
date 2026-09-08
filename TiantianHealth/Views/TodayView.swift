@@ -16,6 +16,7 @@ struct TodayView: View {
     @State private var editingExercise: ExerciseLogEntry?
     @State private var showingWeeklyReview = false
     @State private var pulseAddButton = false
+    @State private var mealTapFeedback = 0
     @AppStorage("lastDismissedReviewWeek") private var lastDismissedReviewWeek = ""
 
     private let today = DateTools.day(.now)
@@ -110,6 +111,7 @@ struct TodayView: View {
                 handlePendingShortcut()
             }
             .onChange(of: router.pendingQuickAction) { _, _ in handlePendingShortcut() }
+            .sensoryFeedback(.selection, trigger: mealTapFeedback)
         }
     }
 
@@ -237,23 +239,28 @@ struct TodayView: View {
                 let entries = todayLogs.filter { $0.meal == meal }.sorted { $0.createdAt < $1.createdAt }
                 HealthCard {
                     VStack(spacing: entries.isEmpty ? 0 : 12) {
-                        HStack {
-                            Label(meal.rawValue, systemImage: meal.symbol)
-                                .font(.headline)
-                            Spacer()
-                            Text("\(Int(entries.reduce(0) { $0 + $1.calories })) kcal")
-                                .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
-                            Button {
-                                selectedMeal = meal
-                            } label: {
+                        Button {
+                            selectedMeal = meal
+                            mealTapFeedback += 1
+                        } label: {
+                            HStack {
+                                Label(meal.rawValue, systemImage: meal.symbol)
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(Int(entries.reduce(0) { $0 + $1.calories })) kcal")
+                                    .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
                                 Image(systemName: "plus")
                                     .font(.headline)
                                     .frame(width: 34, height: 34)
                                     .background(AppTheme.green.opacity(0.12), in: Circle())
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("添加\(meal.rawValue)")
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(PressableRowButtonStyle())
+                        .accessibilityIdentifier("meal-row-\(meal.rawValue)")
+                        .accessibilityLabel("添加\(meal.rawValue)")
+                        .accessibilityHint("打开\(meal.rawValue)记录")
                         if !entries.isEmpty {
                             Divider()
                             ForEach(entries) { entry in
