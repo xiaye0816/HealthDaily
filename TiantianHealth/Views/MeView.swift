@@ -30,7 +30,10 @@ struct MeView: View {
                             }
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("天天健康").font(.title3.bold())
-                                Text("日常基础消耗约 \(Int(profile.calibratedTDEE)) kcal/天")
+                                let healthTotal = (healthStates.first?.typicalRestingEnergy ?? 0) + (healthStates.first?.typicalActiveEnergy ?? 0)
+                                Text(healthKit.isEnabled && healthTotal > 0
+                                     ? "健康典型消耗约 \(Int(healthTotal.rounded())) kcal/天"
+                                     : "备用估算消耗约 \(Int(profile.calibratedTDEE)) kcal/天")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
@@ -38,7 +41,7 @@ struct MeView: View {
                     }
                 }
                 if let profile = profiles.first {
-                    Section("计划设置") {
+                    Section("目标设置") {
                         NavigationLink { BodySettingsView(profile: profile) } label: {
                             settingsLabel("身体资料", symbol: "person.text.rectangle", detail: "出生年月、身高、单位")
                         }
@@ -90,7 +93,7 @@ struct MeView: View {
                     }
                     Section("关于") {
                         NavigationLink { CalculationExplanationView() } label: {
-                            settingsLabel("消耗如何计算", symbol: "function", detail: "估算与校准")
+                            settingsLabel("热量缺口如何计算", symbol: "function", detail: "健康实际值与未来估算")
                         }
                         LabeledContent("数据存储", value: "仅在本机")
                         LabeledContent("版本", value: "1.0.0")
@@ -172,7 +175,7 @@ private struct HealthConnectionView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(healthKit.isEnabled ? "已连接 Apple 健康" : "连接 Apple 健康")
                                     .font(.headline)
-                                Text(healthKit.isEnabled ? "今日消耗在 App 前台自动更新" : "使用健康数据替代单纯公式估算")
+                                Text(healthKit.isEnabled ? "今天实时、过去可刷新、未来按完整日估算" : "用健康实际消耗计算日与周热量缺口")
                                     .font(.caption).foregroundStyle(AppTheme.secondaryText)
                             }
                         }
@@ -292,7 +295,7 @@ struct ResetDataConfirmationSheet: View {
                     resetItem("身体资料与减脂目标")
                     resetItem("体重、热量、饮食和运动记录")
                     resetItem("个人食材库与日常活动基准")
-                    resetItem("每周热量预算")
+                    resetItem("本地热量缺口与健康连接状态")
                 }
             }
         } footer: {
@@ -326,7 +329,6 @@ struct ResetDataConfirmationSheet: View {
 struct BodySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var budgets: [DailyBudget]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
     let profile: UserProfile
@@ -377,7 +379,7 @@ struct BodySettingsView: View {
                 }
             }
             Section {
-                Text("修改身体信息会重新计算消耗起点，并更新本周今天及未来未锁定日期；过去预算不会改变。")
+                Text("修改身体信息会更新健康数据缺失时的备用估算；已有健康与饮食记录不会改变。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -405,7 +407,7 @@ struct BodySettingsView: View {
         profile.age = HealthCalculator.age(from: birthDate)
         profile.heightCM = heightCM
         profile.weightUnit = unit
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, budgets: budgets)
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG)
         try? modelContext.save()
         dismiss()
     }
@@ -414,7 +416,6 @@ struct BodySettingsView: View {
 struct ActivitySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var budgets: [DailyBudget]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
     let profile: UserProfile
@@ -440,7 +441,7 @@ struct ActivitySettingsView: View {
             } header: {
                 Text("日常活动")
             } footer: {
-                Text("这里只设置平时的步数基准。实际运动请在首页发生后记录，运动消耗只增加当天额度。")
+                Text("平均步数只在 Apple 健康没有能量数据时作为备用。连接健康后不会重复计算；仅补录健康遗漏的运动。")
             }
         }
         .appScreenBackground()
@@ -453,7 +454,7 @@ struct ActivitySettingsView: View {
 
     private func saveAndRecalculate(dismissView: Bool = true) {
         profile.averageSteps = averageSteps
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, budgets: budgets)
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG)
         try? modelContext.save()
         if dismissView { dismiss() }
     }
@@ -462,7 +463,6 @@ struct ActivitySettingsView: View {
 struct GoalSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var budgets: [DailyBudget]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
     let profile: UserProfile
@@ -505,7 +505,7 @@ struct GoalSettingsView: View {
                     }
                 }
             } footer: {
-                Text("阶段目标限制在当前体重下降 1%–10% 内。保存后会更新今天和未来未锁定日期，不改动过去。")
+                Text("阶段目标限制在当前体重下降 1%–10% 内。减脂速度决定每日与每周的目标热量缺口。")
             }
         }
         .appScreenBackground()
@@ -537,7 +537,7 @@ struct GoalSettingsView: View {
     private func save() {
         profile.targetWeightKG = targetKG
         profile.pace = pace
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG, budgets: budgets)
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG)
         try? modelContext.save()
         dismiss()
     }
@@ -726,16 +726,16 @@ struct CalculationExplanationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                explanationCard("1", "静息消耗", "根据生理性别、出生年月、身高和近期体重估算身体在静息状态下的能量需求。")
-                explanationCard("2", "日常活动基准", "平均步数用于估算平时的活动消耗；实际运动发生后在首页记录，只增加运动当天的可用额度。")
-                explanationCard("3", "从记录中校准", "当已有记录足以观察方向时，系统会结合平均摄入、体重方向和已记录运动温和修正基础消耗，不会因单日波动骤然改计划。")
+                explanationCard("1", "过去的实际缺口", "过去日期使用 Apple 健康记录的静息能量加活动能量，再减去当天饮食摄入；下拉刷新后会同步更新。")
+                explanationCard("2", "今天的实时缺口", "今天用健康中已累积的消耗减去已摄入热量，同时根据近期完整日预测全天消耗和今天还可摄入多少。")
+                explanationCard("3", "本周与未来", "本周把过去实际、今天实时与未来估算放在一起。未来仅使用近期 Apple 健康完整日估算，不伪装成实际数据。")
                 Text("天天健康提供生活方式管理参考，不替代医疗诊断或营养治疗。如有疾病、孕期或饮食障碍史，请先咨询专业人士。")
                     .font(.footnote).foregroundStyle(.secondary).padding(6)
             }
             .padding(18)
         }
         .background(AppTheme.background)
-        .navigationTitle("消耗如何计算")
+        .navigationTitle("热量缺口如何计算")
         .navigationBarTitleDisplayMode(.inline)
     }
 

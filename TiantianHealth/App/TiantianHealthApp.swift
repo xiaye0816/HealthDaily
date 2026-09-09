@@ -183,7 +183,6 @@ struct RootView: View {
     @AppStorage("didMigrateActualExerciseV1") private var didMigrateActualExerciseV1 = false
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
-    @Query private var budgets: [DailyBudget]
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var healthStates: [HealthIntegrationState]
@@ -194,50 +193,29 @@ struct RootView: View {
 
     private var currentProfile: UserProfile? { profiles.first }
     private var latestWeightKG: Double {
-        weights.first?.weightKG ?? currentProfile?.initialWeightKG ?? 0
+        guard let currentProfile else { return 0 }
+        return latestAvailableWeightKG(profile: currentProfile)
     }
-    private var todayBaseBudget: Double {
-        let today = DateTools.day(.now)
-        return budgets.first(where: { DateTools.isSameDay($0.date, today) })?.targetCalories
-            ?? currentProfile.map {
-                HealthCalculator.dailyCalorieTarget(
-                    tdee: $0.calibratedTDEE,
-                    weightKG: latestWeightKG,
-                    pace: $0.pace,
-                    sex: $0.sex
-                )
-            }
-            ?? 0
-    }
-    private var todaySupplementalExercise: Double {
-        exerciseLogs
-            .filter { DateTools.isSameDay($0.date, .now) && (!healthKit.isEnabled || $0.isHealthSupplement) }
-            .reduce(0) { $0 + $1.calories }
-    }
-    private var widgetTodayAvailableOverride: Double? {
-        guard healthKit.isEnabled,
-              let profile = currentProfile,
-              let energy = healthKit.todayEnergy else { return nil }
-        return HealthCalculator.liveHealthBudget(
-            baseBudget: todayBaseBudget,
+    private var widgetCalorieDays: [HealthCalculator.CalorieDeficitDay] {
+        guard let profile = currentProfile else { return [] }
+        return HealthCalculator.healthDrivenCalorieDays(
+            dates: DateTools.weekDays(containing: .now),
             profile: profile,
             latestWeightKG: latestWeightKG,
-            energy: energy,
+            todayEnergy: healthKit.todayEnergy,
+            historicalEnergy: healthKit.dailyEnergy,
+            foodLogs: foodLogs,
+            exerciseLogs: exerciseLogs,
             state: healthStates.first,
-            supplementalExercise: todaySupplementalExercise
-        )?.availableCalories
+            healthEnabled: healthKit.isEnabled
+        )
     }
 
     private var widgetSnapshotSource: WidgetSnapshotSource {
         WidgetSnapshotSource(
             isOnboarded: hasCompletedOnboarding,
             profile: currentProfile,
-            latestWeightKG: latestWeightKG,
-            budgets: budgets,
-            foodLogs: foodLogs,
-            exerciseLogs: exerciseLogs,
-            healthIntegrationEnabled: healthKit.isEnabled,
-            todayAvailableOverride: widgetTodayAvailableOverride
+            calorieDays: widgetCalorieDays
         )
     }
 
@@ -347,12 +325,6 @@ struct RootView: View {
         profile.calibratedTDEE = pending
         profile.updatedAt = .now
 
-        let latestWeight = latestAvailableWeightKG(profile: profile)
-        let target = HealthCalculator.dailyCalorieTarget(tdee: pending, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
-        let today = DateTools.day(.now)
-        for budget in budgets where budget.date >= today && !budget.isLocked {
-            budget.targetCalories = target
-        }
         state.pendingBaselineTDEE = nil
         state.pendingEffectiveDate = nil
         try? modelContext.save()
@@ -388,17 +360,6 @@ struct RootView: View {
         profile.baselineTDEE = newBaseline
         profile.calibratedTDEE = min(newBaseline * 1.45, max(newBaseline * 0.65, adjusted))
         profile.updatedAt = .now
-
-        let newTarget = HealthCalculator.dailyCalorieTarget(
-            tdee: profile.calibratedTDEE,
-            weightKG: latestWeight,
-            pace: profile.pace,
-            sex: profile.sex
-        )
-        let today = DateTools.day(.now)
-        for budget in budgets where budget.date >= today {
-            budget.targetCalories = newTarget
-        }
 
         do {
             try modelContext.save()

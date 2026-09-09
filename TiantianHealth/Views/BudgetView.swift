@@ -2,10 +2,8 @@ import SwiftUI
 import SwiftData
 
 struct BudgetView: View {
-    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var healthKit: HealthKitService
     @Query private var profiles: [UserProfile]
-    @Query private var budgets: [DailyBudget]
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
@@ -13,98 +11,100 @@ struct BudgetView: View {
 
     private let today = DateTools.day(.now)
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
-    private var weekBudgets: [DailyBudget] {
-        budgets
-            .filter { budget in weekDays.contains(where: { DateTools.isSameDay($0, budget.date) }) }
-            .sorted { $0.date < $1.date }
-    }
-    private var totalBaseBudget: Double { weekBudgets.reduce(0) { $0 + $1.targetCalories } }
-    private var totalExercise: Double {
-        exerciseLogs
-            .filter { log in
-                weekDays.contains(where: { DateTools.isSameDay($0, log.date) })
-                    && (!healthKit.isEnabled || !DateTools.isSameDay(log.date, today) || log.isHealthSupplement)
-            }
-            .reduce(0) { $0 + $1.calories }
-    }
     private var profile: UserProfile? { profiles.first }
-    private var latestWeightKG: Double { weights.first?.weightKG ?? profile?.initialWeightKG ?? 0 }
-    private var todayBaseBudget: Double {
-        weekBudgets.first(where: { DateTools.isSameDay($0.date, today) })?.targetCalories
-            ?? profile.map {
-                HealthCalculator.dailyCalorieTarget(tdee: $0.calibratedTDEE, weightKG: latestWeightKG, pace: $0.pace, sex: $0.sex)
-            }
-            ?? 0
+    private var latestWeightKG: Double {
+        let latestLocal = weights.max { ($0.measuredAt ?? $0.date) < ($1.measuredAt ?? $1.date) }
+        let latestHealth = healthKit.healthWeights.max { $0.measuredAt < $1.measuredAt }
+        switch (latestLocal, latestHealth) {
+        case let (local?, health?):
+            return (local.measuredAt ?? local.date) >= health.measuredAt ? local.weightKG : health.weightKG
+        case let (local?, nil): return local.weightKG
+        case let (nil, health?): return health.weightKG
+        case (nil, nil): return profile?.initialWeightKG ?? 0
+        }
     }
-    private var todaySupplement: Double {
-        exerciseLogs
-            .filter { DateTools.isSameDay($0.date, today) && (!healthKit.isEnabled || $0.isHealthSupplement) }
-            .reduce(0) { $0 + $1.calories }
-    }
-    private var todayLiveHealthBudget: HealthCalculator.LiveHealthBudget? {
-        guard healthKit.isEnabled, let profile, let energy = healthKit.todayEnergy else { return nil }
-        return HealthCalculator.liveHealthBudget(
-            baseBudget: todayBaseBudget,
+    private var calorieDays: [HealthCalculator.CalorieDeficitDay] {
+        guard let profile else { return [] }
+        return HealthCalculator.healthDrivenCalorieDays(
+            dates: weekDays,
             profile: profile,
             latestWeightKG: latestWeightKG,
-            energy: energy,
+            todayEnergy: healthKit.todayEnergy,
+            historicalEnergy: healthKit.dailyEnergy,
+            foodLogs: foodLogs,
+            exerciseLogs: exerciseLogs,
             state: healthStates.first,
-            supplementalExercise: todaySupplement
+            healthEnabled: healthKit.isEnabled
         )
     }
-    private var todayHealthAdjustment: Double { todayLiveHealthBudget?.healthAdjustment ?? 0 }
-    private var totalAdjustment: Double { totalExercise + todayHealthAdjustment }
-    private var totalAvailable: Double {
-        max(0, totalBaseBudget + totalAdjustment)
+    private var summary: HealthCalculator.CalorieDeficitSummary {
+        HealthCalculator.calorieDeficitSummary(days: calorieDays)
     }
-    private var totalConsumed: Double {
-        foodLogs
-            .filter { log in weekDays.contains(where: { DateTools.isSameDay($0, log.date) }) }
-            .reduce(0) { $0 + $1.calories }
+    private var confirmedDayCount: Int {
+        calorieDays.filter { $0.currentDeficit != nil }.count
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    budgetHero
+                    deficitHero
                     dayList
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 28)
             }
+            .refreshable {
+                guard healthKit.isEnabled else { return }
+                await healthKit.refreshAll()
+            }
             .background(AppTheme.background)
-            .navigationTitle("本周预算")
-            .onAppear { ensureBudgets() }
+            .navigationTitle("本周热量缺口")
         }
     }
 
-    private var budgetHero: some View {
+    private var deficitHero: some View {
         HealthCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("本周剩余").font(.subheadline).foregroundStyle(.secondary)
-                        Text("\(Int((totalAvailable - totalConsumed).rounded())) kcal")
+                        Text(summary.currentDeficit >= 0 ? "本周已确认缺口" : "本周已确认盈余")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text("\(Int(abs(summary.currentDeficit).rounded())) kcal")
                             .font(.system(size: 32, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(AppTheme.deepGreen)
+                            .foregroundStyle(summary.currentDeficit >= 0 ? AppTheme.deepGreen : AppTheme.orange)
                             .minimumScaleFactor(0.75)
                             .lineLimit(1)
                             .contentTransition(.numericText())
                     }
                     Spacer(minLength: 12)
-                    Text("周一至周日")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.secondaryText)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(summary.forecastDeficit >= 0 ? "本周预测缺口" : "本周预测盈余")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                        Text("\(Int(abs(summary.forecastDeficit).rounded())) kcal")
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(summary.forecastDeficit >= 0 ? AppTheme.textPrimary : AppTheme.orange)
+                    }
                 }
-                SwiftUI.ProgressView(value: min(totalConsumed, max(totalAvailable, 1)), total: max(totalAvailable, 1))
-                    .tint(AppTheme.orange)
+                SwiftUI.ProgressView(
+                    value: min(max(0, summary.forecastDeficit), max(summary.targetDeficit, 1)),
+                    total: max(summary.targetDeficit, 1)
+                )
+                .tint(summary.forecastDeficit >= 0 ? AppTheme.green : AppTheme.orange)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
-                    summaryMetric("基础预算", totalBaseBudget)
-                    summaryMetric(healthKit.isEnabled ? "动态调整" : "运动增加", totalAdjustment, signed: true)
-                    summaryMetric("实际可用", totalAvailable)
-                    summaryMetric("已摄入", totalConsumed)
+                    summaryMetric("目标缺口", summary.targetDeficit)
+                    summaryMetric(summary.forecastDeficit >= 0 ? "预测缺口" : "预测盈余", abs(summary.forecastDeficit))
+                    summaryMetric("已摄入", summary.consumed)
+                    summaryMetric(summary.remainingIntake >= 0 ? "全周达标还可摄入" : "超出目标摄入", abs(summary.remainingIntake))
                 }
+                Text(healthKit.isEnabled
+                     ? "已确认 \(confirmedDayCount) 天。过去与今天读取 Apple 健康；未来用近期完整日估算，下拉可刷新历史日期。"
+                     : "连接 Apple 健康后，过去和今天会显示实际缺口；当前仅显示身体信息备用估算。")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -112,66 +112,74 @@ struct BudgetView: View {
     private var dayList: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("每天的热量情况").font(.title3.bold())
+                Text("每天的缺口").font(.title3.bold())
                 Spacer()
-                Text("点按查看明细").font(.caption).foregroundStyle(.secondary)
+                Text("点按查看与补记").font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(weekBudgets) { budget in
+            ForEach(calorieDays) { day in
                 NavigationLink {
-                    DailyLogDetailView(date: budget.date, baseBudget: budget.targetCalories)
+                    DailyLogDetailView(date: day.date)
                 } label: {
-                    dayCard(budget)
+                    dayCard(day)
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier(dayIdentifier(budget.date))
+                .accessibilityIdentifier(dayIdentifier(day.date))
             }
         }
     }
 
-    private func dayCard(_ budget: DailyBudget) -> some View {
-        let exercise = exercise(on: budget.date)
-        let isToday = DateTools.isSameDay(budget.date, today)
-        let healthAdjustment = isToday ? todayHealthAdjustment : 0
-        let adjustment = exercise + healthAdjustment
-        let available = max(0, budget.targetCalories + adjustment)
-        let consumed = consumed(on: budget.date)
-        let remaining = available - consumed
-        let isPast = budget.date < today
+    private func dayCard(_ day: HealthCalculator.CalorieDeficitDay) -> some View {
+        let isToday = day.phase == .today
+        let displayedDeficit = day.currentDeficit ?? day.forecastDeficit
+        let isDeficit = (displayedDeficit ?? 0) >= 0
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                Text(weekdayText(budget.date))
+                Text(weekdayText(day.date))
                     .font(.subheadline.bold())
                     .foregroundStyle(isToday ? Color.white : AppTheme.deepGreen)
                     .frame(width: 54, height: 38)
                     .background(isToday ? AppTheme.green : AppTheme.green.opacity(0.1), in: Capsule())
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(budget.date.formatted(.dateTime.month().day()))
+                    Text(day.date.formatted(.dateTime.month().day()))
                         .font(.headline.monospacedDigit())
                         .foregroundStyle(AppTheme.textPrimary)
-                    Text(isToday ? "今天" : (isPast ? "可补记" : "计划"))
+                    Text(daySubtitle(day))
                         .font(.caption)
                         .foregroundStyle(isToday ? AppTheme.deepGreen : AppTheme.secondaryText)
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text(remaining >= 0 ? "剩余 \(Int(remaining.rounded()))" : "超出 \(Int(abs(remaining).rounded()))")
-                        .font(.subheadline.bold().monospacedDigit())
-                        .foregroundStyle(remaining >= 0 ? AppTheme.deepGreen : AppTheme.orange)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    if let displayedDeficit {
+                        Text("\(day.currentDeficit == nil ? "预计" : "")\(isDeficit ? "缺口" : "盈余") \(Int(abs(displayedDeficit).rounded()))")
+                            .font(.subheadline.bold().monospacedDigit())
+                            .foregroundStyle(isDeficit ? AppTheme.deepGreen : AppTheme.orange)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    } else {
+                        Text("缺口待补全")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
                     Image(systemName: "chevron.right")
                         .font(.caption.bold())
                         .foregroundStyle(.tertiary)
                 }
             }
-            SwiftUI.ProgressView(value: min(consumed, max(available, 1)), total: max(available, 1))
-                .tint(isPast ? .secondary : AppTheme.green)
+            SwiftUI.ProgressView(
+                value: min(max(0, displayedDeficit ?? 0), max(day.targetDeficit, 1)),
+                total: max(day.targetDeficit, 1)
+            )
+            .tint(isDeficit ? (isToday ? AppTheme.green : AppTheme.deepGreen) : AppTheme.orange)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
-                compactMetric("基础", budget.targetCalories)
-                compactMetric(isToday && healthKit.isEnabled ? "动态" : "运动", adjustment, signed: true)
-                compactMetric("摄入", consumed)
-                compactMetric("剩余", remaining)
+                compactMetric(day.recordedExpenditure == nil ? "预计消耗" : "实际消耗", day.recordedExpenditure ?? day.planningExpenditure)
+                compactMetric("摄入", day.consumed)
+                compactMetric("目标缺口", day.targetDeficit)
+                if day.phase == .past && !day.hasIntakeData {
+                    compactTextMetric("缺口", "补全饮食后计算")
+                } else {
+                    compactMetric(day.remainingIntake >= 0 ? "还可摄入" : "超出摄入", abs(day.remainingIntake))
+                }
             }
         }
         .padding(14)
@@ -182,42 +190,42 @@ struct BudgetView: View {
         }
     }
 
-    private func summaryMetric(_ title: String, _ value: Double, signed: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Text("\(signedText(value, signed: signed)) kcal")
-                .font(.subheadline.bold().monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+    private func daySubtitle(_ day: HealthCalculator.CalorieDeficitDay) -> String {
+        switch day.phase {
+        case .past:
+            if !day.hasIntakeData { return "可补记 · 缺少饮食记录" }
+            return day.currentDeficit == nil ? "可补记 · 健康数据估算" : "可补记 · Apple 健康实际"
+        case .today: return day.currentDeficit == nil ? "今天 · 全天估算" : "今天 · 实时更新"
+        case .future: return "未来 · 健康历史估算"
         }
     }
 
-    private func compactMetric(_ title: String, _ value: Double, signed: Bool = false) -> some View {
+    private func summaryMetric(_ title: String, _ value: Double) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
+            Text("\(Int(value.rounded())) kcal")
+                .font(.subheadline.bold().monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+    }
+
+    private func compactMetric(_ title: String, _ value: Double) -> some View {
         HStack(spacing: 5) {
             Text(title).foregroundStyle(AppTheme.secondaryText)
-            Text(signedText(value, signed: signed))
+            Text("\(Int(value.rounded()))")
                 .fontWeight(.semibold)
                 .foregroundStyle(AppTheme.textPrimary)
         }
         .font(.caption.monospacedDigit())
     }
 
-    private func consumed(on date: Date) -> Double {
-        foodLogs.filter { DateTools.isSameDay($0.date, date) }.reduce(0) { $0 + $1.calories }
-    }
-
-    private func exercise(on date: Date) -> Double {
-        exerciseLogs
-            .filter {
-                DateTools.isSameDay($0.date, date)
-                    && (!healthKit.isEnabled || !DateTools.isSameDay(date, today) || $0.isHealthSupplement)
-            }
-            .reduce(0) { $0 + $1.calories }
-    }
-
-    private func signedText(_ value: Double, signed: Bool) -> String {
-        let rounded = Int(value.rounded())
-        return signed && rounded > 0 ? "+\(rounded)" : "\(rounded)"
+    private func compactTextMetric(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 5) {
+            Text(title).foregroundStyle(AppTheme.secondaryText)
+            Text(value).fontWeight(.semibold).foregroundStyle(AppTheme.textPrimary)
+        }
+        .font(.caption)
     }
 
     private func weekdayText(_ date: Date) -> String {
@@ -229,21 +237,6 @@ struct BudgetView: View {
         if DateTools.isSameDay(date, today) { return "budget-day-today" }
         if date < today { return "budget-day-past" }
         return "budget-day-future"
-    }
-
-    private func ensureBudgets() {
-        guard let profile = profiles.first else { return }
-        let weight = weights.first?.weightKG ?? profile.initialWeightKG
-        let target = HealthCalculator.dailyCalorieTarget(
-            tdee: profile.calibratedTDEE,
-            weightKG: weight,
-            pace: profile.pace,
-            sex: profile.sex
-        )
-        for day in weekDays where !budgets.contains(where: { DateTools.isSameDay($0.date, day) }) {
-            modelContext.insert(DailyBudget(date: day, targetCalories: target))
-        }
-        try? modelContext.save()
     }
 }
 
@@ -257,7 +250,6 @@ private struct DailyLogDetailView: View {
     @Query private var healthStates: [HealthIntegrationState]
 
     let date: Date
-    let baseBudget: Double
 
     @State private var selectedMeal: MealType?
     @State private var addingExercise = false
@@ -267,9 +259,27 @@ private struct DailyLogDetailView: View {
     @State private var deletingExercise: ExerciseLogEntry?
 
     private var editable: Bool { DateTools.canEditLogs(on: date) }
-    private var isToday: Bool { DateTools.isSameDay(date, .now) }
     private var profile: UserProfile? { profiles.first }
-    private var latestWeightKG: Double { weights.first?.weightKG ?? profile?.initialWeightKG ?? 0 }
+    private var latestWeightKG: Double {
+        healthKit.healthWeights.max { $0.measuredAt < $1.measuredAt }?.weightKG
+            ?? weights.first?.weightKG
+            ?? profile?.initialWeightKG
+            ?? 0
+    }
+    private var dayStatus: HealthCalculator.CalorieDeficitDay? {
+        guard let profile else { return nil }
+        return HealthCalculator.healthDrivenCalorieDays(
+            dates: [date],
+            profile: profile,
+            latestWeightKG: latestWeightKG,
+            todayEnergy: healthKit.todayEnergy,
+            historicalEnergy: healthKit.dailyEnergy,
+            foodLogs: foodLogs,
+            exerciseLogs: exerciseLogs,
+            state: healthStates.first,
+            healthEnabled: healthKit.isEnabled
+        ).first
+    }
     private var dayFoodLogs: [FoodLogEntry] {
         foodLogs
             .filter { DateTools.isSameDay($0.date, date) }
@@ -280,34 +290,6 @@ private struct DailyLogDetailView: View {
             .filter { DateTools.isSameDay($0.date, date) }
             .sorted { $0.createdAt < $1.createdAt }
     }
-    private var consumed: Double { dayFoodLogs.reduce(0) { $0 + $1.calories } }
-    private var exercise: Double {
-        dayExerciseLogs
-            .filter { !healthKit.isEnabled || !isToday || $0.isHealthSupplement }
-            .reduce(0) { $0 + $1.calories }
-    }
-    private var liveHealthBudget: HealthCalculator.LiveHealthBudget? {
-        guard isToday,
-              healthKit.isEnabled,
-              let profile,
-              let energy = healthKit.todayEnergy else { return nil }
-        return HealthCalculator.liveHealthBudget(
-            baseBudget: baseBudget,
-            profile: profile,
-            latestWeightKG: latestWeightKG,
-            energy: energy,
-            state: healthStates.first,
-            supplementalExercise: exercise
-        )
-    }
-    private var adjustment: Double {
-        liveHealthBudget?.adjustmentFromBase ?? exercise
-    }
-    private var available: Double {
-        liveHealthBudget?.availableCalories
-            ?? CalorieMath.availableCalories(base: baseBudget, exercise: exercise)
-    }
-    private var remaining: Double { available - consumed }
 
     var body: some View {
         ScrollView {
@@ -321,6 +303,10 @@ private struct DailyLogDetailView: View {
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 28)
+        }
+        .refreshable {
+            guard healthKit.isEnabled else { return }
+            await healthKit.refreshAll()
         }
         .background(AppTheme.background)
         .navigationTitle(date.formatted(.dateTime.month().day()))
@@ -336,7 +322,7 @@ private struct DailyLogDetailView: View {
                     date: date,
                     type: type,
                     calories: calories,
-                    isHealthSupplement: healthKit.isEnabled && isToday
+                    isHealthSupplement: healthKit.isEnabled
                 ))
                 try? modelContext.save()
             }
@@ -350,7 +336,7 @@ private struct DailyLogDetailView: View {
             ExerciseEntrySheet(date: date, entry: entry) { type, calories in
                 entry.type = type
                 entry.calories = calories
-                if healthKit.isEnabled && isToday { entry.isHealthSupplement = true }
+                if healthKit.isEnabled { entry.isHealthSupplement = true }
                 try? modelContext.save()
             }
             .presentationDetents([.large])
@@ -381,34 +367,52 @@ private struct DailyLogDetailView: View {
 
     private var summaryCard: some View {
         HealthCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(weekdayText) · \(date.formatted(.dateTime.month().day()))")
-                            .font(.headline)
-                        Text(editable ? "饮食与运动明细" : "计划日 · 暂不可记录")
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.secondaryText)
+            if let status = dayStatus {
+                let displayed = status.currentDeficit ?? status.forecastDeficit
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(weekdayText) · \(date.formatted(.dateTime.month().day()))")
+                                .font(.headline)
+                            Text(status.source.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                        Spacer()
+                        if let displayed {
+                            Text("\(status.currentDeficit == nil ? "预计" : "")\(displayed >= 0 ? "缺口" : "盈余") \(Int(abs(displayed).rounded()))")
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(displayed >= 0 ? AppTheme.deepGreen : AppTheme.orange)
+                        } else {
+                            Text("缺口待补全")
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
                     }
-                    Spacer()
-                    Text(remaining >= 0 ? "剩余 \(Int(remaining.rounded()))" : "超出 \(Int(abs(remaining).rounded()))")
-                        .font(.headline.monospacedDigit())
-                        .foregroundStyle(remaining >= 0 ? AppTheme.deepGreen : AppTheme.orange)
+                    SwiftUI.ProgressView(
+                        value: min(max(0, displayed ?? 0), max(status.targetDeficit, 1)),
+                        total: max(status.targetDeficit, 1)
+                    )
+                    .tint((displayed ?? 0) >= 0 ? AppTheme.green : AppTheme.orange)
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 10) {
+                        detailMetric(status.recordedExpenditure == nil ? "预计消耗" : "实际消耗", status.recordedExpenditure ?? status.planningExpenditure)
+                        detailMetric("已摄入", status.consumed)
+                        detailMetric("目标缺口", status.targetDeficit)
+                        if status.phase == .past && !status.hasIntakeData {
+                            detailTextMetric("当前缺口", "补全饮食后计算")
+                        } else {
+                            detailMetric(status.remainingIntake >= 0 ? "达标还可摄入" : "超出目标摄入", abs(status.remainingIntake))
+                        }
+                    }
                 }
-                SwiftUI.ProgressView(value: min(consumed, max(available, 1)), total: max(available, 1))
-                    .tint(AppTheme.orange)
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 10) {
-                    detailMetric(isToday && healthKit.isEnabled ? "计划额度" : "基础预算", baseBudget)
-                    detailMetric(isToday && healthKit.isEnabled ? "动态调整" : "运动增加", adjustment, signed: true)
-                    detailMetric("实际可用", available)
-                    detailMetric("已摄入", consumed)
-                }
+            } else {
+                EmptyStateView(symbol: "flame", title: "暂无热量数据", message: "完成身体资料设置后即可计算。")
             }
         }
     }
 
     private var futureNotice: some View {
-        Label("未来日期仅查看计划；到当天后即可记录饮食和运动。", systemImage: "calendar.badge.clock")
+        Label("未来日期使用近期 Apple 健康完整日估算；到当天后自动切换为实时数据。", systemImage: "calendar.badge.clock")
             .font(.footnote)
             .foregroundStyle(AppTheme.deepGreen)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -418,13 +422,13 @@ private struct DailyLogDetailView: View {
 
     private var exerciseSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("运动", actionTitle: "记录", enabled: editable) { addingExercise = true }
+            sectionHeader("运动", actionTitle: "补录", enabled: editable) { addingExercise = true }
             HealthCard {
                 if dayExerciseLogs.isEmpty {
                     emptyRow(
                         symbol: "figure.run",
-                        title: editable ? "还没有运动记录" : "暂无运动记录",
-                        message: editable ? "点按上方“记录”补充当天运动" : "未来日期不支持提前记录"
+                        title: editable ? "没有需要补录的运动" : "暂无运动记录",
+                        message: editable ? "仅补充 Apple 健康没有记录到的消耗" : "未来日期不支持提前记录"
                     )
                 } else {
                     VStack(spacing: 0) {
@@ -556,19 +560,24 @@ private struct DailyLogDetailView: View {
         }
     }
 
-    private func detailMetric(_ title: String, _ value: Double, signed: Bool = false) -> some View {
+    private func detailMetric(_ title: String, _ value: Double) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Text("\(signedText(value, signed: signed)) kcal")
+            Text("\(Int(value.rounded())) kcal")
                 .font(.subheadline.bold().monospacedDigit())
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.72)
         }
     }
 
-    private func signedText(_ value: Double, signed: Bool) -> String {
-        let rounded = Int(value.rounded())
-        return signed && rounded > 0 ? "+\(rounded)" : "\(rounded)"
+    private func detailTextMetric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
+            Text(value)
+                .font(.subheadline.bold())
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
     }
 
     private var weekdayText: String {

@@ -9,16 +9,59 @@ enum HealthCalculator {
         let confidence: Double
     }
 
-    struct LiveHealthBudget: Equatable {
-        let baseBudget: Double
-        let projectedExpenditure: Double
-        let plannedDeficit: Double
-        let supplementalExercise: Double
-        let availableCalories: Double
-
-        var adjustmentFromBase: Double { availableCalories - baseBudget }
-        var healthAdjustment: Double { adjustmentFromBase - supplementalExercise }
+    enum CalorieDayPhase: Hashable {
+        case past
+        case today
+        case future
     }
+
+    enum CalorieEnergySource: String, Hashable {
+        case healthActual = "Apple 健康实际"
+        case healthProjected = "Apple 健康实时预计"
+        case healthEstimated = "Apple 健康典型估算"
+        case bodyEstimated = "身体信息估算"
+    }
+
+    struct CalorieDeficitDay: Identifiable, Hashable {
+        let date: Date
+        let phase: CalorieDayPhase
+        let source: CalorieEnergySource
+        let recordedExpenditure: Double?
+        let planningExpenditure: Double
+        let targetDeficit: Double
+        let consumed: Double
+        let targetIntake: Double
+        let hasIntakeData: Bool
+
+        var id: Date { date }
+        var currentDeficit: Double? {
+            guard phase != .past || hasIntakeData else { return nil }
+            return recordedExpenditure.map { $0 - consumed }
+        }
+        var remainingIntake: Double { targetIntake - consumed }
+
+        var forecastDeficit: Double? {
+            switch phase {
+            case .past:
+                guard hasIntakeData else { return nil }
+                return currentDeficit ?? (planningExpenditure - consumed)
+            case .today:
+                let projectedIfNoMoreFood = planningExpenditure - consumed
+                return remainingIntake >= 0 ? targetDeficit : projectedIfNoMoreFood
+            case .future:
+                return targetDeficit
+            }
+        }
+    }
+
+    struct CalorieDeficitSummary: Equatable {
+        let targetDeficit: Double
+        let currentDeficit: Double
+        let forecastDeficit: Double
+        let consumed: Double
+        let remainingIntake: Double
+    }
+
     static func age(from birthDate: Date, on referenceDate: Date = .now) -> Int {
         max(0, Calendar.current.dateComponents([.year], from: birthDate, to: referenceDate).year ?? 0)
     }
@@ -194,81 +237,179 @@ enum HealthCalculator {
         return AppleHealthBaseline(resting: resting, active: active, total: total, validDayCount: valid.count, confidence: confidence)
     }
 
-    static func liveHealthBudget(
-        baseBudget: Double,
-        plannedTDEE: Double,
-        currentResting: Double?,
-        currentActive: Double?,
-        typicalResting: Double,
-        typicalActive: Double,
-        supplementalExercise: Double,
-        minimumCalories: Double,
-        at date: Date = .now,
-        calendar: Calendar = .current
-    ) -> LiveHealthBudget? {
-        guard currentResting != nil || currentActive != nil,
-              let day = calendar.dateInterval(of: .day, for: date),
-              day.duration > 0 else { return nil }
-
-        let elapsed = min(1, max(0, date.timeIntervalSince(day.start) / day.duration))
-        let remaining = 1 - elapsed
-
-        func projected(_ current: Double?, typical: Double) -> Double {
-            let typical = max(0, typical)
-            guard let current else { return typical }
-            return max(0, current) + typical * remaining
-        }
-
-        let projectedExpenditure = projected(currentResting, typical: typicalResting)
-            + projected(currentActive, typical: typicalActive)
-        guard projectedExpenditure.isFinite, projectedExpenditure > 0 else { return nil }
-
-        let deficit = plannedDeficit(tdee: plannedTDEE, calorieTarget: baseBudget)
-        let liveTarget = max(minimumCalories, projectedExpenditure - deficit)
-        let supplement = max(0, supplementalExercise)
-        return LiveHealthBudget(
-            baseBudget: baseBudget,
-            projectedExpenditure: projectedExpenditure,
-            plannedDeficit: deficit,
-            supplementalExercise: supplement,
-            availableCalories: liveTarget + supplement
-        )
-    }
-
-    static func liveHealthBudget(
-        baseBudget: Double,
+    static func healthDrivenCalorieDays(
+        dates: [Date],
         profile: UserProfile,
         latestWeightKG: Double,
-        energy: HealthEnergySnapshot,
+        todayEnergy: HealthEnergySnapshot?,
+        historicalEnergy: [HealthDailyEnergy],
+        foodLogs: [FoodLogEntry],
+        exerciseLogs: [ExerciseLogEntry],
         state: HealthIntegrationState?,
-        supplementalExercise: Double,
-        at date: Date = .now,
+        healthEnabled: Bool,
+        referenceDate: Date = .now,
         calendar: Calendar = .current
-    ) -> LiveHealthBudget? {
+    ) -> [CalorieDeficitDay] {
+        let referenceDay = calendar.startOfDay(for: referenceDate)
         let formulaResting = restingEnergy(
             sex: profile.sex,
             age: profile.currentAge,
             heightCM: profile.heightCM,
             weightKG: latestWeightKG
         )
-        let typicalResting = max(0, state?.typicalRestingEnergy ?? 0) > 0
-            ? max(0, state?.typicalRestingEnergy ?? 0)
-            : formulaResting
-        let typicalActive = (state?.validDayCount ?? 0) > 0
-            ? max(0, state?.typicalActiveEnergy ?? 0)
-            : max(0, profile.calibratedTDEE - formulaResting)
-        return liveHealthBudget(
-            baseBudget: baseBudget,
-            plannedTDEE: profile.calibratedTDEE,
-            currentResting: energy.resting,
-            currentActive: energy.active,
-            typicalResting: typicalResting,
-            typicalActive: typicalActive,
-            supplementalExercise: supplementalExercise,
-            minimumCalories: minimumDailyCalories(for: profile.sex),
-            at: date,
-            calendar: calendar
+        let formulaTotal = max(formulaResting, profile.calibratedTDEE)
+        let storedResting = max(0, state?.typicalRestingEnergy ?? 0)
+        let storedActive = max(0, state?.typicalActiveEnergy ?? 0)
+        let storedTotal = storedResting + storedActive
+        let historyBaseline = healthEnabled
+            ? appleHealthBaseline(days: historicalEnergy, fallbackTDEE: storedTotal > 0 ? storedTotal : formulaTotal)
+            : nil
+        let historicalHealthTotal = historyBaseline.map { $0.resting + $0.active }
+        let typicalTotal = max(
+            formulaResting,
+            historicalHealthTotal ?? (storedTotal > 0 ? storedTotal : formulaTotal)
         )
+        let typicalResting = min(
+            typicalTotal,
+            historyBaseline?.resting ?? (storedResting > 0 ? storedResting : formulaResting)
+        )
+        let typicalActive = max(0, typicalTotal - typicalResting)
+        let referenceTarget = dailyCalorieTarget(
+            tdee: typicalTotal,
+            weightKG: latestWeightKG,
+            pace: profile.pace,
+            sex: profile.sex
+        )
+        let goalDeficit = plannedDeficit(tdee: typicalTotal, calorieTarget: referenceTarget)
+        let minimumCalories = minimumDailyCalories(for: profile.sex)
+        let historyByDay = Dictionary(grouping: historicalEnergy) { calendar.startOfDay(for: $0.date) }
+
+        return dates.sorted().map { rawDate in
+            let date = calendar.startOfDay(for: rawDate)
+            let phase: CalorieDayPhase = date < referenceDay ? .past : (date > referenceDay ? .future : .today)
+            let logs = foodLogs.filter { calendar.isDate($0.date, inSameDayAs: date) }
+            let consumed = logs.reduce(0) { $0 + max(0, $1.calories) }
+
+            var recordedExpenditure: Double?
+            var planningExpenditure: Double
+            var source: CalorieEnergySource
+            var hasHealthReading = false
+
+            if healthEnabled {
+                switch phase {
+                case .past:
+                    if let energy = historyByDay[date]?.last,
+                       energy.resting != nil || energy.active != nil {
+                        let resting = energy.resting ?? typicalResting
+                        let active = energy.active ?? typicalActive
+                        planningExpenditure = max(0, resting) + max(0, active)
+                        hasHealthReading = true
+                        if energy.resting != nil && energy.active != nil {
+                            recordedExpenditure = planningExpenditure
+                            source = .healthActual
+                        } else {
+                            recordedExpenditure = nil
+                            source = .healthEstimated
+                        }
+                    } else {
+                        planningExpenditure = typicalTotal
+                        recordedExpenditure = nil
+                        source = .healthEstimated
+                    }
+                case .today:
+                    if let todayEnergy,
+                       todayEnergy.resting != nil || todayEnergy.active != nil,
+                       let interval = calendar.dateInterval(of: .day, for: referenceDate),
+                       interval.duration > 0 {
+                        let elapsed = min(1, max(0, referenceDate.timeIntervalSince(interval.start) / interval.duration))
+                        let currentResting = todayEnergy.resting ?? typicalResting * elapsed
+                        let currentActive = todayEnergy.active ?? typicalActive * elapsed
+                        if todayEnergy.resting != nil && todayEnergy.active != nil {
+                            recordedExpenditure = max(0, currentResting) + max(0, currentActive)
+                        } else {
+                            recordedExpenditure = nil
+                        }
+                        planningExpenditure = projectedFullDayExpenditure(
+                            currentResting: todayEnergy.resting,
+                            currentActive: todayEnergy.active,
+                            typicalResting: typicalResting,
+                            typicalActive: typicalActive,
+                            at: referenceDate,
+                            calendar: calendar
+                        ) ?? typicalTotal
+                        hasHealthReading = true
+                        source = .healthProjected
+                    } else {
+                        planningExpenditure = typicalTotal
+                        recordedExpenditure = nil
+                        source = .healthEstimated
+                    }
+                case .future:
+                    planningExpenditure = typicalTotal
+                    recordedExpenditure = nil
+                    source = .healthEstimated
+                }
+            } else {
+                planningExpenditure = formulaTotal
+                recordedExpenditure = nil
+                source = .bodyEstimated
+            }
+
+            let dayExercises = exerciseLogs.filter { calendar.isDate($0.date, inSameDayAs: date) }
+            let supplementalExercise = dayExercises
+                .filter { !healthEnabled || !hasHealthReading || $0.isHealthSupplement }
+                .reduce(0) { $0 + max(0, $1.calories) }
+            planningExpenditure += supplementalExercise
+            if let recorded = recordedExpenditure {
+                recordedExpenditure = recorded + supplementalExercise
+            }
+
+            let effectiveTargetDeficit = min(goalDeficit, max(0, planningExpenditure - minimumCalories))
+            let targetIntake = max(minimumCalories, planningExpenditure - effectiveTargetDeficit)
+            return CalorieDeficitDay(
+                date: date,
+                phase: phase,
+                source: source,
+                recordedExpenditure: recordedExpenditure,
+                planningExpenditure: planningExpenditure,
+                targetDeficit: effectiveTargetDeficit,
+                consumed: consumed,
+                targetIntake: targetIntake,
+                hasIntakeData: !logs.isEmpty
+            )
+        }
+    }
+
+    static func calorieDeficitSummary(days: [CalorieDeficitDay]) -> CalorieDeficitSummary {
+        CalorieDeficitSummary(
+            targetDeficit: days.reduce(0) { $0 + $1.targetDeficit },
+            currentDeficit: days.compactMap(\.currentDeficit).reduce(0, +),
+            forecastDeficit: days.compactMap(\.forecastDeficit).reduce(0, +),
+            consumed: days.reduce(0) { $0 + $1.consumed },
+            remainingIntake: days.reduce(0) { $0 + $1.targetIntake - $1.consumed }
+        )
+    }
+
+    static func projectedFullDayExpenditure(
+        currentResting: Double?,
+        currentActive: Double?,
+        typicalResting: Double,
+        typicalActive: Double,
+        at date: Date = .now,
+        calendar: Calendar = .current
+    ) -> Double? {
+        guard currentResting != nil || currentActive != nil,
+              let day = calendar.dateInterval(of: .day, for: date),
+              day.duration > 0 else { return nil }
+        let elapsed = min(1, max(0, date.timeIntervalSince(day.start) / day.duration))
+        let remaining = 1 - elapsed
+        func projected(_ current: Double?, typical: Double) -> Double {
+            guard let current else { return max(0, typical) }
+            return max(0, current) + max(0, typical) * remaining
+        }
+        let value = projected(currentResting, typical: typicalResting)
+            + projected(currentActive, typical: typicalActive)
+        return value.isFinite && value > 0 ? value : nil
     }
 
     private static func median(_ values: [Double]) -> Double {
@@ -359,21 +500,12 @@ enum HealthCalculator {
 enum PlanUpdater {
     static func applySettingsChange(
         profile: UserProfile,
-        weightKG: Double,
-        budgets: [DailyBudget],
-        referenceDate: Date = .now
+        weightKG: Double
     ) {
         let baseline = HealthCalculator.baselineTDEE(profile: profile, weightKG: weightKG)
         profile.baselineTDEE = baseline
         profile.calibratedTDEE = baseline
         profile.updatedAt = .now
-
-        let target = HealthCalculator.dailyCalorieTarget(tdee: baseline, weightKG: weightKG, pace: profile.pace, sex: profile.sex)
-        let today = DateTools.day(referenceDate)
-        let weekDays = DateTools.weekDays(containing: today)
-        for budget in budgets where budget.date >= today && !budget.isLocked && weekDays.contains(where: { DateTools.isSameDay($0, budget.date) }) {
-            budget.targetCalories = target
-        }
     }
 }
 

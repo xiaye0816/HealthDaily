@@ -9,7 +9,7 @@ struct MainTabView: View {
                 .tabItem { Label("今日", systemImage: "sun.max.fill") }
                 .tag(AppTab.today)
             BudgetView()
-                .tabItem { Label("预算", systemImage: "calendar") }
+                .tabItem { Label("本周", systemImage: "calendar") }
                 .tag(AppTab.budget)
             ProgressView()
                 .tabItem { Label("趋势", systemImage: "chart.line.uptrend.xyaxis") }

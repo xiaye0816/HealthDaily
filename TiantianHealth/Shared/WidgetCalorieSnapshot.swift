@@ -11,6 +11,27 @@ struct WidgetCalorieDay: Codable, Hashable {
     let baseBudget: Double
     let exercise: Double
     let consumed: Double
+    let targetDeficit: Double?
+    let currentDeficit: Double?
+    let forecastDeficit: Double?
+
+    init(
+        date: Date,
+        baseBudget: Double,
+        exercise: Double,
+        consumed: Double,
+        targetDeficit: Double? = nil,
+        currentDeficit: Double? = nil,
+        forecastDeficit: Double? = nil
+    ) {
+        self.date = date
+        self.baseBudget = baseBudget
+        self.exercise = exercise
+        self.consumed = consumed
+        self.targetDeficit = targetDeficit
+        self.currentDeficit = currentDeficit
+        self.forecastDeficit = forecastDeficit
+    }
 }
 
 struct WidgetCalorieSnapshot: Codable, Hashable {
@@ -34,23 +55,35 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
             guard let entries = valuesByDay[calendar.startOfDay(for: date)], !entries.isEmpty else {
                 return WidgetCalorieDay(date: date, baseBudget: fallbackDailyBudget, exercise: 0, consumed: 0)
             }
+            let currentValues = entries.compactMap(\.currentDeficit)
+            let forecastValues = entries.compactMap(\.forecastDeficit)
+            let targetValues = entries.compactMap(\.targetDeficit)
             return WidgetCalorieDay(
                 date: date,
                 baseBudget: entries.first?.baseBudget ?? fallbackDailyBudget,
                 exercise: entries.reduce(0) { $0 + $1.exercise },
-                consumed: entries.reduce(0) { $0 + max(0, $1.consumed) }
+                consumed: entries.reduce(0) { $0 + max(0, $1.consumed) },
+                targetDeficit: targetValues.isEmpty ? nil : targetValues.reduce(0, +),
+                currentDeficit: currentValues.isEmpty ? nil : currentValues.reduce(0, +),
+                forecastDeficit: forecastValues.isEmpty ? nil : forecastValues.reduce(0, +)
             )
         }
 
         let todayValues = values(for: today)
         let weekValues = weekDates.map(values(for:))
         return WidgetCalorieMetrics(
-            todayBaseBudget: max(0, todayValues.baseBudget),
-            todayExercise: todayValues.exercise,
+            todayTargetIntake: max(0, todayValues.baseBudget),
             todayConsumed: max(0, todayValues.consumed),
-            weekBaseBudget: weekValues.reduce(0) { $0 + max(0, $1.baseBudget) },
-            weekExercise: weekValues.reduce(0) { $0 + $1.exercise },
-            weekConsumed: weekValues.reduce(0) { $0 + max(0, $1.consumed) }
+            todayTargetDeficit: max(0, todayValues.targetDeficit ?? 0),
+            todayCurrentDeficit: todayValues.currentDeficit ?? 0,
+            todayHasCurrentDeficit: todayValues.currentDeficit != nil,
+            todayForecastDeficit: todayValues.forecastDeficit ?? todayValues.targetDeficit ?? 0,
+            weekTargetIntake: weekValues.reduce(0) { $0 + max(0, $1.baseBudget) },
+            weekConsumed: weekValues.reduce(0) { $0 + max(0, $1.consumed) },
+            weekTargetDeficit: weekValues.reduce(0) { $0 + max(0, $1.targetDeficit ?? 0) },
+            weekCurrentDeficit: weekValues.compactMap(\.currentDeficit).reduce(0, +),
+            weekHasCurrentDeficit: weekValues.contains { $0.currentDeficit != nil },
+            weekForecastDeficit: weekValues.compactMap(\.forecastDeficit).reduce(0, +)
         )
     }
 
@@ -69,17 +102,21 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
 }
 
 struct WidgetCalorieMetrics: Hashable {
-    let todayBaseBudget: Double
-    let todayExercise: Double
+    let todayTargetIntake: Double
     let todayConsumed: Double
-    let weekBaseBudget: Double
-    let weekExercise: Double
+    let todayTargetDeficit: Double
+    let todayCurrentDeficit: Double
+    let todayHasCurrentDeficit: Bool
+    let todayForecastDeficit: Double
+    let weekTargetIntake: Double
     let weekConsumed: Double
+    let weekTargetDeficit: Double
+    let weekCurrentDeficit: Double
+    let weekHasCurrentDeficit: Bool
+    let weekForecastDeficit: Double
 
-    var todayAvailable: Double { max(0, todayBaseBudget + todayExercise) }
-    var todayRemaining: Double { todayAvailable - todayConsumed }
-    var weekAvailable: Double { max(0, weekBaseBudget + weekExercise) }
-    var weekRemaining: Double { weekAvailable - weekConsumed }
+    var todayRemainingIntake: Double { todayTargetIntake - todayConsumed }
+    var weekRemainingIntake: Double { weekTargetIntake - weekConsumed }
 }
 
 struct WidgetSnapshotStore {

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSHealthShareUsageDescription</key>
-	<string>读取活动能量、静息能量和体重，用于制定热量预算并展示体重趋势。</string>
+	<string>读取活动能量、静息能量和体重，用于计算每日与每周热量缺口并展示体重趋势。</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>将你在天天健康中记录的体重同步到 Apple 健康。</string>
 	<key>CFBundleDevelopmentRegion</key>

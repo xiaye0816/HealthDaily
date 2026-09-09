@@ -90,7 +90,7 @@ final class HealthKitService: ObservableObject {
         defer { isRefreshing = false }
         do {
             async let today = loadTodayEnergy()
-            async let history = loadDailyEnergy(days: 28)
+            async let history = loadDailyEnergy(days: 30)
             async let weights = loadWeights(days: 30)
             let values = try await (today, history, weights)
             todayEnergy = values.0

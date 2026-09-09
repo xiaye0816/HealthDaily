@@ -65,9 +65,14 @@ struct PressableRowButtonStyle: ButtonStyle {
 }
 
 struct RingProgressView: View {
-    let progress: Double
-    let consumed: Double
-    let target: Double
+    let deficit: Double
+    let targetDeficit: Double
+    let title: String
+
+    private var progress: Double {
+        guard targetDeficit > 0 else { return 0 }
+        return min(1, max(0, deficit / targetDeficit))
+    }
 
     var body: some View {
         ZStack {
@@ -76,26 +81,28 @@ struct RingProgressView: View {
             Circle()
                 .trim(from: 0, to: min(max(progress, 0), 1))
                 .stroke(
-                    AngularGradient(colors: [AppTheme.green, AppTheme.orange], center: .center),
+                    deficit >= 0
+                        ? AngularGradient(colors: [AppTheme.green, AppTheme.orange], center: .center)
+                        : AngularGradient(colors: [AppTheme.orange, AppTheme.orange], center: .center),
                     style: StrokeStyle(lineWidth: 15, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
                 .animation(.snappy(duration: 0.35), value: progress)
             VStack(spacing: 4) {
-                Text("今日已摄入")
+                Text(deficit >= 0 ? title : title.replacingOccurrences(of: "缺口", with: "盈余"))
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
-                Text("\(Int(consumed))")
+                Text("\(Int(abs(deficit).rounded()))")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .foregroundStyle(AppTheme.textPrimary)
+                    .foregroundStyle(deficit >= 0 ? AppTheme.deepGreen : AppTheme.orange)
                     .contentTransition(.numericText())
-                Text("/ \(Int(target)) kcal")
+                Text("/ 目标 \(Int(targetDeficit.rounded())) kcal")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(AppTheme.secondaryText)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("今日已摄入 \(Int(consumed)) 千卡，目标 \(Int(target)) 千卡")
+        .accessibilityLabel("\(deficit >= 0 ? title : title.replacingOccurrences(of: "缺口", with: "盈余")) \(Int(abs(deficit).rounded())) 千卡，目标缺口 \(Int(targetDeficit.rounded())) 千卡")
     }
 }
 

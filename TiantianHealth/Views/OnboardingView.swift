@@ -83,7 +83,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(step == 0 ? "欢迎使用" : "天天健康")
                         .font(.title2.bold())
-                    Text("用真实记录，找到适合你的热量节奏")
+                    Text("用 Apple 健康与饮食记录，看清每天和每周的热量缺口")
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
@@ -165,7 +165,7 @@ struct OnboardingView: View {
                         .disabled(healthKit.isRefreshing)
                     }
                 }
-                infoBanner("公式只是启动值。之后会结合你的摄入和体重记录逐步校准。")
+                infoBanner("身体公式只在 Apple 健康没有数据时作为备用；连接后以健康中的实际消耗为准。")
             }
             .padding(22)
         }
@@ -174,7 +174,7 @@ struct OnboardingView: View {
     private var activityStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                stepTitle("设置日常活动基准", subtitle: "只需要选择平时的平均步数；实际运动发生后再单独记录。")
+                stepTitle("设置备用活动基准", subtitle: "Apple 健康没有数据时，平均步数用于估算；有健康数据时不会重复计算。")
                 HealthCard {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
@@ -197,7 +197,7 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                     }
                 }
-                infoBanner("步数用于估算日常活动。游泳、跑步或力量训练等实际运动，在首页发生后记录即可。")
+                infoBanner("连接 Apple 健康后，步数和运动消耗直接体现在健康能量中；只需补录健康没有记录到的运动。")
             }
             .padding(22)
         }
@@ -206,7 +206,7 @@ struct OnboardingView: View {
     private var goalStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                stepTitle("你想以什么节奏前进？", subtitle: "热量目标按周管理，某天吃多一点并不代表失败。")
+                stepTitle("你想以什么节奏前进？", subtitle: "节奏决定目标热量缺口；重点看一天和一周，而不是评价某一餐。")
                 HealthCard {
                     VStack(spacing: 20) {
                         selectionRow(
@@ -240,7 +240,7 @@ struct OnboardingView: View {
     private var previewStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                stepTitle("你的起步计划", subtitle: "先按估算开始，记录越完整，建议会越贴近你。")
+                stepTitle("你的起步目标", subtitle: "先用身体信息估算；连接 Apple 健康后自动切换为实际消耗。")
                 HealthCard {
                     VStack(alignment: .leading, spacing: 14) {
                         Label("每日预估消耗", systemImage: "flame.fill")
@@ -251,7 +251,7 @@ struct OnboardingView: View {
                         Divider()
                         metricRow("静息消耗", value: resting)
                         metricRow("日常步数", value: stepEnergy)
-                        Text("实际运动不预先摊入每天，记录后会增加运动当天的可用额度。")
+                        Text("这是健康数据缺失时的备用估算，不会与 Apple 健康的活动能量重复相加。")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
                     }
@@ -276,10 +276,10 @@ struct OnboardingView: View {
                     }
                 }
                 HStack(spacing: 12) {
-                    planMetric("每日目标", "\(Int(targetCalories))", "kcal")
-                    planMetric("本周预算", "\(Int(targetCalories * 7))", "kcal")
+                    planMetric("起步可摄入", "\(Int(targetCalories))", "kcal/天")
+                    planMetric("周目标缺口", "\(Int(dailyDeficit * 7))", "kcal")
                 }
-                infoBanner("这不是身体的精确答案，而是反馈闭环的起点。日常记录不会评价你，只会帮你重新计算选择。")
+                infoBanner("今天会展示实时缺口，本周会组合过去实际值、今天实时值与未来估算。")
             }
             .padding(22)
         }
@@ -331,9 +331,6 @@ struct OnboardingView: View {
         )
         modelContext.insert(profile)
         modelContext.insert(WeightEntry(date: .now, weightKG: currentWeightKG))
-        DateTools.weekDays(containing: .now).forEach {
-            modelContext.insert(DailyBudget(date: $0, targetCalories: targetCalories))
-        }
         do {
             try modelContext.save()
             onComplete()

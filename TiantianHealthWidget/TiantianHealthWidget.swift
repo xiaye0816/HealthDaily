@@ -31,15 +31,21 @@ private extension WidgetCalorieSnapshot {
         return WidgetCalorieSnapshot(
             generatedAt: .now,
             isOnboarded: true,
-            fallbackDailyBudget: 1_850,
+            fallbackDailyBudget: 1_950,
             days: (0..<7).compactMap { index in
                 guard let date = calendar.date(byAdding: .day, value: index, to: monday) else { return nil }
                 let isToday = calendar.isDate(date, inSameDayAs: today)
+                let isPast = date < today
+                let consumed = isToday ? 1_420.0 : (isPast ? 1_760.0 : 0)
+                let current = isToday ? 280.0 : (isPast ? 590.0 : nil)
                 return WidgetCalorieDay(
                     date: date,
-                    baseBudget: 1_850,
-                    exercise: isToday ? 180 : 0,
-                    consumed: isToday ? 1_420 : (date < today ? 1_760 : 0)
+                    baseBudget: 1_950,
+                    exercise: 0,
+                    consumed: consumed,
+                    targetDeficit: 400,
+                    currentDeficit: current,
+                    forecastDeficit: isPast ? (current ?? 400) : 400
                 )
             }
         )
@@ -79,30 +85,31 @@ private struct CalorieWidgetView: View {
     }
 
     private func smallContent(_ metrics: WidgetCalorieMetrics) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let todayValue = metrics.todayHasCurrentDeficit ? metrics.todayCurrentDeficit : metrics.todayForecastDeficit
+        return VStack(alignment: .leading, spacing: 0) {
             brandHeader(trailing: "今天")
             Spacer(minLength: 7)
-            remainingHero(metrics.todayRemaining, compact: true)
+            deficitHero(
+                todayValue,
+                label: metrics.todayHasCurrentDeficit ? "实时缺口" : "预计缺口",
+                compact: true
+            )
             Spacer(minLength: 8)
-            calorieProgress(consumed: metrics.todayConsumed, available: metrics.todayAvailable, color: WidgetPalette.orange)
-            Text("已摄入 \(whole(metrics.todayConsumed)) / 可用 \(whole(metrics.todayAvailable))")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(WidgetPalette.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            deficitProgress(value: todayValue, target: metrics.todayTargetDeficit, color: WidgetPalette.orange)
+            intakeLine(remaining: metrics.todayRemainingIntake, targetDeficit: metrics.todayTargetDeficit)
                 .padding(.top, 5)
             Divider().overlay(WidgetPalette.track).padding(.vertical, 7)
             HStack(spacing: 4) {
-                Text(metrics.weekRemaining >= 0 ? "本周剩余" : "本周超出")
+                Text("本周预测")
                 Spacer(minLength: 3)
-                Text("\(whole(abs(metrics.weekRemaining))) kcal")
+                Text("\(whole(metrics.weekForecastDeficit)) / \(whole(metrics.weekTargetDeficit)) kcal")
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(metrics.weekRemaining >= 0 ? WidgetPalette.deepGreen : WidgetPalette.orange)
+                    .foregroundStyle(metrics.weekForecastDeficit >= 0 ? WidgetPalette.deepGreen : WidgetPalette.orange)
             }
             .font(.caption2)
             .lineLimit(1)
-            .minimumScaleFactor(0.75)
+            .minimumScaleFactor(0.7)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary(metrics))
@@ -117,10 +124,10 @@ private struct CalorieWidgetView: View {
                 Link(destination: URL(string: "tiantianhealth://today")!) {
                     metricColumn(
                         title: "今天",
-                        positiveLabel: "还可以安排",
-                        remaining: metrics.todayRemaining,
-                        consumed: metrics.todayConsumed,
-                        available: metrics.todayAvailable,
+                        label: metrics.todayHasCurrentDeficit ? "实时缺口" : "预计缺口",
+                        value: metrics.todayHasCurrentDeficit ? metrics.todayCurrentDeficit : metrics.todayForecastDeficit,
+                        target: metrics.todayTargetDeficit,
+                        remainingIntake: metrics.todayRemainingIntake,
                         color: WidgetPalette.orange
                     )
                 }
@@ -129,10 +136,10 @@ private struct CalorieWidgetView: View {
                 Link(destination: URL(string: "tiantianhealth://budget")!) {
                     metricColumn(
                         title: "本周",
-                        positiveLabel: "剩余",
-                        remaining: metrics.weekRemaining,
-                        consumed: metrics.weekConsumed,
-                        available: metrics.weekAvailable,
+                        label: "预测缺口",
+                        value: metrics.weekForecastDeficit,
+                        target: metrics.weekTargetDeficit,
+                        remainingIntake: metrics.weekRemainingIntake,
                         color: WidgetPalette.green
                     )
                 }
@@ -144,10 +151,10 @@ private struct CalorieWidgetView: View {
 
     private func metricColumn(
         title: String,
-        positiveLabel: String,
-        remaining: Double,
-        consumed: Double,
-        available: Double,
+        label: String,
+        value: Double,
+        target: Double,
+        remainingIntake: Double,
         color: Color
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -157,19 +164,15 @@ private struct CalorieWidgetView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WidgetPalette.primary)
             }
-            remainingHero(remaining, compact: false, positiveLabel: positiveLabel)
+            deficitHero(value, label: label, compact: false)
             Spacer(minLength: 1)
-            calorieProgress(consumed: consumed, available: available, color: color)
-            Text("摄入 \(whole(consumed)) / 可用 \(whole(available))")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(WidgetPalette.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+            deficitProgress(value: value, target: target, color: color)
+            intakeLine(remaining: remainingIntake, targetDeficit: target)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title)，\(remaining >= 0 ? "剩余" : "超出") \(whole(abs(remaining))) 千卡，摄入 \(whole(consumed))，可用 \(whole(available))")
+        .accessibilityLabel("\(title)，\(value >= 0 ? "缺口" : "盈余") \(whole(abs(value))) 千卡，目标缺口 \(whole(target)) 千卡")
     }
 
     private func brandHeader(trailing: String) -> some View {
@@ -190,32 +193,42 @@ private struct CalorieWidgetView: View {
         }
     }
 
-    private func remainingHero(_ remaining: Double, compact: Bool, positiveLabel: String = "还可以安排") -> some View {
+    private func deficitHero(_ value: Double, label: String, compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(remaining >= 0 ? positiveLabel : (compact ? "比计划多用了" : "超出"))
+            Text(value >= 0 ? label : label.replacingOccurrences(of: "缺口", with: "盈余"))
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(WidgetPalette.secondary)
                 .lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(whole(abs(remaining)))
+                Text(whole(abs(value)))
                     .font(.system(size: compact ? 31 : 27, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(remaining >= 0 ? WidgetPalette.deepGreen : WidgetPalette.orange)
+                    .foregroundStyle(value >= 0 ? WidgetPalette.deepGreen : WidgetPalette.orange)
                     .lineLimit(1)
                     .minimumScaleFactor(0.64)
                 Text("kcal")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(remaining >= 0 ? WidgetPalette.deepGreen : WidgetPalette.orange)
+                    .foregroundStyle(value >= 0 ? WidgetPalette.deepGreen : WidgetPalette.orange)
             }
         }
     }
 
-    private func calorieProgress(consumed: Double, available: Double, color: Color) -> some View {
+    private func intakeLine(remaining: Double, targetDeficit: Double) -> some View {
+        Text(remaining >= 0
+             ? "目标 \(whole(targetDeficit)) · 还可摄入 \(whole(remaining))"
+             : "目标 \(whole(targetDeficit)) · 超出摄入 \(whole(abs(remaining)))")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(WidgetPalette.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.68)
+    }
+
+    private func deficitProgress(value: Double, target: Double, color: Color) -> some View {
         GeometryReader { proxy in
-            let ratio = available > 0 ? min(1, max(0, consumed / available)) : 0
+            let ratio = target > 0 ? min(1, max(0, value / target)) : 0
             ZStack(alignment: .leading) {
                 Capsule().fill(WidgetPalette.track)
                 Capsule()
-                    .fill(consumed > available ? WidgetPalette.orange : color)
+                    .fill(value >= 0 ? color : WidgetPalette.orange)
                     .frame(width: max(ratio > 0 ? 5 : 0, proxy.size.width * ratio))
             }
         }
@@ -233,7 +246,7 @@ private struct CalorieWidgetView: View {
             Text("打开天天健康\n完成设置")
                 .font(.headline)
                 .foregroundStyle(WidgetPalette.primary)
-            Text("设置后在桌面查看今日与本周热量")
+            Text("设置后在桌面查看今日与本周热量缺口")
                 .font(.caption2)
                 .foregroundStyle(WidgetPalette.secondary)
                 .lineLimit(2)
@@ -247,7 +260,8 @@ private struct CalorieWidgetView: View {
     }
 
     private func accessibilitySummary(_ metrics: WidgetCalorieMetrics) -> String {
-        "今天\(metrics.todayRemaining >= 0 ? "剩余" : "超出") \(whole(abs(metrics.todayRemaining))) 千卡，已摄入 \(whole(metrics.todayConsumed))，实际可用 \(whole(metrics.todayAvailable))。本周\(metrics.weekRemaining >= 0 ? "剩余" : "超出") \(whole(abs(metrics.weekRemaining))) 千卡。"
+        let today = metrics.todayHasCurrentDeficit ? metrics.todayCurrentDeficit : metrics.todayForecastDeficit
+        return "今天\(today >= 0 ? "缺口" : "盈余") \(whole(abs(today))) 千卡，目标缺口 \(whole(metrics.todayTargetDeficit)) 千卡。本周预测缺口 \(whole(metrics.weekForecastDeficit)) 千卡。"
     }
 }
 
@@ -257,8 +271,8 @@ struct TiantianHealthCalorieWidget: Widget {
         StaticConfiguration(kind: WidgetSharedConstants.widgetKind, provider: CalorieWidgetProvider()) { entry in
             CalorieWidgetView(entry: entry)
         }
-        .configurationDisplayName("天天健康热量")
-        .description("查看今天和本周还可以安排的热量。")
+        .configurationDisplayName("天天健康热量缺口")
+        .description("查看今天的实时缺口与本周预测缺口。")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }

@@ -8,6 +8,8 @@ struct ProgressView: View {
     @EnvironmentObject private var healthKit: HealthKitService
     @Query private var profiles: [UserProfile]
     @Query private var weights: [WeightEntry]
+    @Query private var foodLogs: [FoodLogEntry]
+    @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var healthStates: [HealthIntegrationState]
 
     @State private var editingEntry: WeightEntry?
@@ -20,13 +22,12 @@ struct ProgressView: View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: referenceDate)
         let cutoff = calendar.date(byAdding: .day, value: -29, to: today) ?? today
-        var descriptor = FetchDescriptor<WeightEntry>(
+        let descriptor = FetchDescriptor<WeightEntry>(
             predicate: #Predicate { entry in
                 entry.date >= cutoff && entry.date <= referenceDate
             },
             sortBy: [SortDescriptor(\WeightEntry.date)]
         )
-        descriptor.fetchLimit = 31
         _weights = Query(descriptor)
     }
 
@@ -79,6 +80,20 @@ struct ProgressView: View {
             .formatted(.number.precision(.fractionLength(1)))
         return "已选择 \(weight) \(unit.rawValue)，\(selectedWeightPoint.date.formatted(.dateTime.month().day()))"
     }
+    private var todayCalorieStatus: HealthCalculator.CalorieDeficitDay? {
+        guard let profile else { return nil }
+        return HealthCalculator.healthDrivenCalorieDays(
+            dates: [DateTools.day(.now)],
+            profile: profile,
+            latestWeightKG: latestWeight,
+            todayEnergy: healthKit.todayEnergy,
+            historicalEnergy: healthKit.dailyEnergy,
+            foodLogs: foodLogs,
+            exerciseLogs: exerciseLogs,
+            state: healthStates.first,
+            healthEnabled: healthKit.isEnabled
+        ).first
+    }
 
     var body: some View {
         NavigationStack {
@@ -91,6 +106,10 @@ struct ProgressView: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 28)
+            }
+            .refreshable {
+                guard healthKit.isEnabled else { return }
+                await healthKit.refreshAll()
             }
             .background(AppTheme.background)
             .navigationTitle("趋势")
@@ -327,11 +346,11 @@ struct ProgressView: View {
             VStack(alignment: .leading, spacing: 13) {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("每日预估消耗").font(.headline)
+                        Text("热量缺口依据").font(.headline)
                         Text(expenditureSource).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text("\(Int(profile?.calibratedTDEE ?? 0)) kcal")
+                    Text("\(Int((todayCalorieStatus?.planningExpenditure ?? profile?.calibratedTDEE ?? 0).rounded())) kcal")
                         .font(.title3.bold().monospacedDigit()).foregroundStyle(AppTheme.deepGreen)
                 }
                 Divider()
@@ -342,11 +361,14 @@ struct ProgressView: View {
                     let activity = healthKit.isEnabled && (healthState?.typicalActiveEnergy ?? 0) > 0
                         ? healthState!.typicalActiveEnergy
                         : HealthCalculator.stepEnergy(restingEnergy: formulaResting, averageSteps: profile.averageSteps)
-                    let dailyTarget = HealthCalculator.dailyCalorieTarget(tdee: profile.calibratedTDEE, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
-                    let dailyDeficit = HealthCalculator.plannedDeficit(tdee: profile.calibratedTDEE, calorieTarget: dailyTarget)
+                    let dailyDeficit = todayCalorieStatus?.targetDeficit
+                        ?? HealthCalculator.plannedDeficit(
+                            tdee: profile.calibratedTDEE,
+                            calorieTarget: HealthCalculator.dailyCalorieTarget(tdee: profile.calibratedTDEE, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
+                        )
                     expenditureRow("静息消耗", resting)
                     expenditureRow(healthKit.isEnabled ? "典型活动" : "日常步数", activity)
-                    Label(healthKit.isEnabled ? "今日额度按预计全天消耗减去计划缺口实时变化；完整日数据从明天校准基础预算。" : "实际运动会在发生当天单独增加可用额度，不计入固定基准。", systemImage: "figure.run")
+                    Label(healthKit.isEnabled ? "过去看健康实际值，今天看实时消耗，未来使用近期完整日估算。" : "尚无健康数据时使用身体信息和平均步数作为备用估算。", systemImage: "figure.run")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                         .padding(.vertical, 3)
@@ -424,7 +446,7 @@ struct ProgressView: View {
     }
 
     private var expenditureSource: String {
-        if healthKit.isEnabled { return "Apple 健康完整日数据 · 次日校准" }
+        if healthKit.isEnabled { return "Apple 健康实际值与完整日估算" }
         guard let first = measurements.first, let last = measurements.last else { return "来自身体信息与活动基准" }
         let days = Calendar.current.dateComponents([.day], from: first.date, to: last.date).day ?? 0
         return measurements.count >= 3 && days >= 7 ? "身体与活动估算 · 正在结合记录校准" : "来自身体信息与活动基准"

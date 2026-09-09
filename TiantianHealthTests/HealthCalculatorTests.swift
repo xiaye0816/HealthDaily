@@ -224,7 +224,7 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(CalorieMath.availableCalories(base: 1_850, exercise: -50), 1_850, accuracy: 0.001)
     }
 
-    func testLiveHealthBudgetProjectsFullDayAndPreservesPlannedDeficit() throws {
+    func testProjectedFullDayExpenditureUsesCurrentAndTypicalRemainder() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let noon = try XCTUnwrap(calendar.date(from: DateComponents(
@@ -234,37 +234,220 @@ final class HealthCalculatorTests: XCTestCase {
             hour: 12
         )))
 
-        let result = try XCTUnwrap(HealthCalculator.liveHealthBudget(
-            baseBudget: 1_800,
-            plannedTDEE: 2_200,
+        let result = try XCTUnwrap(HealthCalculator.projectedFullDayExpenditure(
             currentResting: 900,
             currentActive: 200,
             typicalResting: 1_800,
             typicalActive: 400,
-            supplementalExercise: 100,
-            minimumCalories: 1_500,
             at: noon,
             calendar: calendar
         ))
 
-        XCTAssertEqual(result.projectedExpenditure, 2_200, accuracy: 0.001)
-        XCTAssertEqual(result.plannedDeficit, 400, accuracy: 0.001)
-        XCTAssertEqual(result.availableCalories, 1_900, accuracy: 0.001)
-        XCTAssertEqual(result.adjustmentFromBase, 100, accuracy: 0.001)
-        XCTAssertEqual(result.healthAdjustment, 0, accuracy: 0.001)
+        XCTAssertEqual(result, 2_200, accuracy: 0.001)
     }
 
-    func testLiveHealthBudgetRequiresAtLeastOneCurrentHealthValue() {
-        XCTAssertNil(HealthCalculator.liveHealthBudget(
-            baseBudget: 1_800,
-            plannedTDEE: 2_200,
+    func testProjectedFullDayExpenditureRequiresCurrentHealthValue() {
+        XCTAssertNil(HealthCalculator.projectedFullDayExpenditure(
             currentResting: nil,
             currentActive: nil,
             typicalResting: 1_800,
-            typicalActive: 400,
-            supplementalExercise: 0,
-            minimumCalories: 1_500
+            typicalActive: 400
         ))
+    }
+
+    func testHealthDrivenDaysCombinePastActualTodayLiveAndFutureEstimate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let reference = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 12)))
+        let today = calendar.startOfDay(for: reference)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: today))
+        let birthDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 1990, month: 1, day: 1)))
+        let profile = UserProfile(
+            sex: .male,
+            birthDate: birthDate,
+            heightCM: 180,
+            weightUnit: .kg,
+            initialWeightKG: 80,
+            targetWeightKG: 76,
+            pace: .gentle,
+            averageSteps: 5_000,
+            baselineTDEE: 2_200
+        )
+        let state = HealthIntegrationState()
+        state.isEnabled = true
+        state.typicalRestingEnergy = 1_800
+        state.typicalActiveEnergy = 400
+        let yesterdayLog = FoodLogEntry(
+            date: yesterday,
+            meal: .dinner,
+            presetID: nil,
+            name: "昨天",
+            quantity: 1,
+            unit: "份",
+            calories: 1_900
+        )
+        let todayLog = FoodLogEntry(
+            date: today,
+            meal: .lunch,
+            presetID: nil,
+            name: "今天",
+            quantity: 1,
+            unit: "份",
+            calories: 1_600
+        )
+        // FoodLogEntry normalizes with Calendar.current. Pin these fixtures to the
+        // GMT day used by this test so local timezone does not move them a day.
+        yesterdayLog.date = yesterday
+        todayLog.date = today
+        let logs = [yesterdayLog, todayLog]
+
+        let days = HealthCalculator.healthDrivenCalorieDays(
+            dates: [yesterday, today, tomorrow],
+            profile: profile,
+            latestWeightKG: 80,
+            todayEnergy: HealthEnergySnapshot(resting: 900, active: 200, updatedAt: reference),
+            historicalEnergy: [HealthDailyEnergy(date: yesterday, resting: 1_800, active: 500)],
+            foodLogs: logs,
+            exerciseLogs: [],
+            state: state,
+            healthEnabled: true,
+            referenceDate: reference,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(days.count, 3)
+        XCTAssertEqual(days[0].phase, .past)
+        XCTAssertEqual(days[0].recordedExpenditure ?? 0, 2_300, accuracy: 0.001)
+        XCTAssertEqual(days[0].currentDeficit ?? 0, 400, accuracy: 0.001)
+        XCTAssertEqual(days[1].phase, .today)
+        XCTAssertEqual(days[1].recordedExpenditure ?? 0, 1_100, accuracy: 0.001)
+        XCTAssertEqual(days[1].planningExpenditure, 2_250, accuracy: 0.001)
+        XCTAssertEqual(days[1].currentDeficit ?? 0, -500, accuracy: 0.001)
+        XCTAssertEqual(days[1].forecastDeficit ?? 0, days[1].targetDeficit, accuracy: 0.001)
+        XCTAssertEqual(days[2].phase, .future)
+        XCTAssertNil(days[2].recordedExpenditure)
+        XCTAssertEqual(days[2].source, .healthEstimated)
+
+        let summary = HealthCalculator.calorieDeficitSummary(days: days)
+        XCTAssertEqual(summary.currentDeficit, -100, accuracy: 0.001)
+        XCTAssertEqual(summary.forecastDeficit, 400 + days[1].targetDeficit + days[2].targetDeficit, accuracy: 0.001)
+    }
+
+    func testMissingOrPartialHealthEnergyNeverPretendsToBeActualDeficit() throws {
+        let calendar = Calendar.current
+        let reference = Date.now
+        let today = calendar.startOfDay(for: reference)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let birthDate = try XCTUnwrap(calendar.date(byAdding: .year, value: -30, to: today))
+        let profile = UserProfile(
+            sex: .female,
+            birthDate: birthDate,
+            heightCM: 165,
+            weightUnit: .kg,
+            initialWeightKG: 65,
+            targetWeightKG: 62,
+            pace: .gentle,
+            averageSteps: 5_000,
+            baselineTDEE: 2_000
+        )
+        let state = HealthIntegrationState()
+        state.isEnabled = true
+        state.typicalRestingEnergy = 1_500
+        state.typicalActiveEnergy = 500
+
+        let days = HealthCalculator.healthDrivenCalorieDays(
+            dates: [yesterday, today],
+            profile: profile,
+            latestWeightKG: 65,
+            todayEnergy: HealthEnergySnapshot(resting: 900, active: nil, updatedAt: reference),
+            historicalEnergy: [HealthDailyEnergy(date: yesterday, resting: 1_500, active: 500)],
+            foodLogs: [],
+            exerciseLogs: [],
+            state: state,
+            healthEnabled: true,
+            referenceDate: reference,
+            calendar: calendar
+        )
+
+        XCTAssertNil(days[0].currentDeficit)
+        XCTAssertEqual(days[0].source, .healthActual)
+        XCTAssertEqual(days[0].recordedExpenditure ?? 0, 2_000, accuracy: 0.001)
+        XCTAssertNil(days[0].forecastDeficit)
+        XCTAssertNil(days[1].currentDeficit)
+        XCTAssertEqual(days[1].source, .healthProjected)
+    }
+
+    func testBodyFallbackIsForecastOnly() throws {
+        let reference = Date.now
+        let today = DateTools.day(reference)
+        let birthDate = try XCTUnwrap(Calendar.current.date(byAdding: .year, value: -30, to: today))
+        let profile = UserProfile(
+            sex: .male,
+            birthDate: birthDate,
+            heightCM: 178,
+            weightUnit: .kg,
+            initialWeightKG: 80,
+            targetWeightKG: 76,
+            pace: .gentle,
+            averageSteps: 5_000,
+            baselineTDEE: 2_100
+        )
+
+        let day = try XCTUnwrap(HealthCalculator.healthDrivenCalorieDays(
+            dates: [today],
+            profile: profile,
+            latestWeightKG: 80,
+            todayEnergy: nil,
+            historicalEnergy: [],
+            foodLogs: [],
+            exerciseLogs: [],
+            state: nil,
+            healthEnabled: false,
+            referenceDate: reference
+        ).first)
+
+        XCTAssertNil(day.currentDeficit)
+        XCTAssertEqual(day.source, .bodyEstimated)
+        XCTAssertEqual(day.forecastDeficit ?? 0, day.targetDeficit, accuracy: 0.001)
+    }
+
+    func testHealthSupplementIsAddedWithoutDoubleCountingOtherManualExercise() throws {
+        let reference = Date.now
+        let today = DateTools.day(reference)
+        let birthDate = try XCTUnwrap(Calendar.current.date(byAdding: .year, value: -30, to: today))
+        let profile = UserProfile(
+            sex: .female,
+            birthDate: birthDate,
+            heightCM: 165,
+            weightUnit: .kg,
+            initialWeightKG: 65,
+            targetWeightKG: 61.8,
+            pace: .gentle,
+            averageSteps: 5_000,
+            baselineTDEE: 2_000
+        )
+        let state = HealthIntegrationState()
+        state.typicalRestingEnergy = 1_500
+        state.typicalActiveEnergy = 500
+        let ordinary = ExerciseLogEntry(date: today, type: "健康已记录", calories: 300, isHealthSupplement: false)
+        let supplement = ExerciseLogEntry(date: today, type: "补录", calories: 100, isHealthSupplement: true)
+        let baseEnergy = HealthEnergySnapshot(resting: 1_000, active: 300, updatedAt: reference)
+
+        let day = try XCTUnwrap(HealthCalculator.healthDrivenCalorieDays(
+            dates: [today],
+            profile: profile,
+            latestWeightKG: 65,
+            todayEnergy: baseEnergy,
+            historicalEnergy: [],
+            foodLogs: [],
+            exerciseLogs: [ordinary, supplement],
+            state: state,
+            healthEnabled: true,
+            referenceDate: reference
+        ).first)
+
+        XCTAssertEqual(day.recordedExpenditure ?? 0, 1_400, accuracy: 0.001)
     }
 
     func testKilocalorieKilojouleRoundTrip() {
@@ -290,56 +473,61 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), [newestUsed.id, olderUsed.id, newestUnused.id, olderUnused.id])
     }
 
-    func testWidgetMetricsIncludeExerciseAndUseFallbackForMissingDays() {
+    func testWidgetMetricsExposeTodayAndWeekDeficits() {
         let calendar = Calendar.current
         let reference = calendar.date(from: DateComponents(year: 2026, month: 9, day: 8, hour: 10))!
         let monday = DateTools.startOfWeek(containing: reference)
-        let tuesday = calendar.date(byAdding: .day, value: 1, to: monday)!
         let snapshot = WidgetCalorieSnapshot(
             generatedAt: reference,
             isOnboarded: true,
             fallbackDailyBudget: 1_800,
-            days: [
-                WidgetCalorieDay(date: monday, baseBudget: 1_700, exercise: 0, consumed: 1_600),
-                WidgetCalorieDay(date: tuesday, baseBudget: 1_700, exercise: 250, consumed: 1_400)
-            ]
+            days: (0..<7).map { index in
+                let date = calendar.date(byAdding: .day, value: index, to: monday)!
+                return WidgetCalorieDay(
+                    date: date,
+                    baseBudget: 1_800,
+                    exercise: 0,
+                    consumed: index == 0 ? 1_600 : (index == 1 ? 1_400 : 0),
+                    targetDeficit: 400,
+                    currentDeficit: index == 0 ? 500 : (index == 1 ? 250 : nil),
+                    forecastDeficit: index == 0 ? 500 : 400
+                )
+            }
         )
 
         let metrics = snapshot.metrics(on: reference, calendar: calendar)
-        XCTAssertEqual(metrics.todayAvailable, 1_950, accuracy: 0.001)
-        XCTAssertEqual(metrics.todayRemaining, 550, accuracy: 0.001)
-        XCTAssertEqual(metrics.weekBaseBudget, 12_400, accuracy: 0.001)
-        XCTAssertEqual(metrics.weekExercise, 250, accuracy: 0.001)
+        XCTAssertTrue(metrics.todayHasCurrentDeficit)
+        XCTAssertEqual(metrics.todayCurrentDeficit, 250, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayTargetDeficit, 400, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayRemainingIntake, 400, accuracy: 0.001)
         XCTAssertEqual(metrics.weekConsumed, 3_000, accuracy: 0.001)
-        XCTAssertEqual(metrics.weekRemaining, 9_650, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekTargetDeficit, 2_800, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekCurrentDeficit, 750, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekForecastDeficit, 2_900, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekRemainingIntake, 9_600, accuracy: 0.001)
     }
 
-    func testWidgetMetricsExposeOverageWithoutChangingStoredValues() {
+    func testWidgetMetricsExposeOverTargetIntakeWithoutChangingStoredValues() {
         let now = Date.now
         let snapshot = WidgetCalorieSnapshot(
             generatedAt: now,
             isOnboarded: true,
             fallbackDailyBudget: 1_700,
-            days: [WidgetCalorieDay(date: now, baseBudget: 1_700, exercise: 100, consumed: 2_000)]
-        )
-
-        XCTAssertEqual(snapshot.metrics(on: now).todayRemaining, -200, accuracy: 0.001)
-    }
-
-    func testWidgetMetricsPreserveSignedLiveHealthAdjustment() {
-        let now = Date.now
-        let snapshot = WidgetCalorieSnapshot(
-            generatedAt: now,
-            isOnboarded: true,
-            fallbackDailyBudget: 1_700,
-            days: [WidgetCalorieDay(date: now, baseBudget: 1_700, exercise: -250, consumed: 1_000)]
+            days: [WidgetCalorieDay(
+                date: now,
+                baseBudget: 1_700,
+                exercise: 0,
+                consumed: 2_000,
+                targetDeficit: 400,
+                currentDeficit: -200,
+                forecastDeficit: -200
+            )]
         )
 
         let metrics = snapshot.metrics(on: now)
-        XCTAssertEqual(metrics.todayExercise, -250, accuracy: 0.001)
-        XCTAssertEqual(metrics.todayAvailable, 1_450, accuracy: 0.001)
-        XCTAssertEqual(metrics.todayRemaining, 450, accuracy: 0.001)
-        XCTAssertEqual(metrics.weekExercise, -250, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayRemainingIntake, -300, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayCurrentDeficit, -200, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayForecastDeficit, -200, accuracy: 0.001)
     }
 
     func testWidgetSnapshotStoreDoesNotRewriteUnchangedContentAndCanClear() {
