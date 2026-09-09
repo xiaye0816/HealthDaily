@@ -10,6 +10,7 @@ struct TodayView: View {
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var budgets: [DailyBudget]
+    @Query private var healthStates: [HealthIntegrationState]
 
     @State private var selectedMeal: MealType?
     @State private var editingFood: FoodLogEntry?
@@ -29,13 +30,35 @@ struct TodayView: View {
             .sorted { $0.createdAt < $1.createdAt }
     }
     private var todayConsumed: Double { todayLogs.reduce(0) { $0 + $1.calories } }
-    private var todayExercise: Double { todayExerciseLogs.reduce(0) { $0 + $1.calories } }
+    private var todayExercise: Double {
+        todayExerciseLogs
+            .filter { !healthKit.isEnabled || $0.isHealthSupplement }
+            .reduce(0) { $0 + $1.calories }
+    }
     private var todayBaseBudget: Double {
         budgets.first(where: { DateTools.isSameDay($0.date, today) })?.targetCalories
             ?? profile.map { dailyTarget(for: $0) }
             ?? 2_000
     }
-    private var todayBudget: Double { CalorieMath.availableCalories(base: todayBaseBudget, exercise: todayExercise) }
+    private var todayLiveHealthBudget: HealthCalculator.LiveHealthBudget? {
+        guard healthKit.isEnabled,
+              let profile,
+              let energy = healthKit.todayEnergy else { return nil }
+        return HealthCalculator.liveHealthBudget(
+            baseBudget: todayBaseBudget,
+            profile: profile,
+            latestWeightKG: latestWeightKG,
+            energy: energy,
+            state: healthStates.first,
+            supplementalExercise: todayExercise
+        )
+    }
+    private var todayBudget: Double {
+        todayLiveHealthBudget?.availableCalories
+            ?? CalorieMath.availableCalories(base: todayBaseBudget, exercise: todayExercise)
+    }
+    private var todayHealthAdjustment: Double { todayLiveHealthBudget?.healthAdjustment ?? 0 }
+    private var todayTotalAdjustment: Double { todayBudget - todayBaseBudget }
     private var remainingToday: Double { todayBudget - todayConsumed }
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
     private var weekBudget: Double {
@@ -43,10 +66,14 @@ struct TodayView: View {
             .reduce(0) { $0 + $1.targetCalories }
     }
     private var weekExercise: Double {
-        exerciseLogs.filter { log in weekDays.contains(where: { DateTools.isSameDay($0, log.date) }) }
+        exerciseLogs.filter { log in
+            weekDays.contains(where: { DateTools.isSameDay($0, log.date) })
+                && (!healthKit.isEnabled || !DateTools.isSameDay(log.date, today) || log.isHealthSupplement)
+        }
             .reduce(0) { $0 + $1.calories }
     }
-    private var weekAvailable: Double { CalorieMath.availableCalories(base: weekBudget, exercise: weekExercise) }
+    private var weekAdjustment: Double { weekExercise + todayHealthAdjustment }
+    private var weekAvailable: Double { max(0, weekBudget + weekAdjustment) }
     private var weekConsumed: Double {
         foodLogs.filter { log in weekDays.contains(where: { DateTools.isSameDay($0, log.date) }) }
             .reduce(0) { $0 + $1.calories }
@@ -97,6 +124,7 @@ struct TodayView: View {
                 ExerciseEntrySheet(date: today, entry: entry) { type, calories in
                     entry.type = type
                     entry.calories = calories
+                    if healthKit.isEnabled { entry.isHealthSupplement = true }
                     try? modelContext.save()
                 }
                 .presentationDetents([.large])
@@ -145,7 +173,7 @@ struct TodayView: View {
                         ZStack(alignment: .leading) {
                             Capsule().fill(AppTheme.divider)
                             Capsule().fill(AppTheme.green)
-                                .frame(width: proxy.size.width * min(1, total / max(profile?.baselineTDEE ?? 1, 1)))
+                                .frame(width: proxy.size.width * min(1, total / max(todayLiveHealthBudget?.projectedExpenditure ?? profile?.baselineTDEE ?? 1, 1)))
                         }
                     }
                     .frame(height: 7)
@@ -154,7 +182,14 @@ struct TodayView: View {
                         Spacer()
                         energyMetric("活动", energy.active)
                     }
-                    Text("更新于 \(energy.updatedAt.formatted(.dateTime.hour().minute())) · 完整数据明天用于校准后续预算")
+                    if let live = todayLiveHealthBudget {
+                        HStack {
+                            energyMetric("预计全天", live.projectedExpenditure)
+                            Spacer()
+                            energyMetric("计划缺口", live.plannedDeficit)
+                        }
+                    }
+                    Text("更新于 \(energy.updatedAt.formatted(.dateTime.hour().minute())) · 今日可用已按预计全天消耗减去计划缺口实时调整")
                         .font(.caption2).foregroundStyle(AppTheme.secondaryText)
                 } else if healthKit.isEnabled {
                     HStack(spacing: 10) {
@@ -190,14 +225,14 @@ struct TodayView: View {
                 .frame(width: 205, height: 205)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        calorieMetric("基础额度", todayBaseBudget, prefix: "")
-                        calorieMetric("今日运动", todayExercise, prefix: "+")
-                        calorieMetric("今日可用", todayBudget, prefix: "")
+                        calorieMetric(healthKit.isEnabled ? "计划额度" : "基础额度", todayBaseBudget)
+                        calorieMetric(healthKit.isEnabled ? "实时调整" : "今日运动", healthKit.isEnabled ? todayTotalAdjustment : todayExercise, signed: true, accent: true)
+                        calorieMetric("今日可用", todayBudget)
                     }
                     VStack(spacing: 8) {
-                        calorieMetric("基础额度", todayBaseBudget, prefix: "")
-                        calorieMetric("今日运动", todayExercise, prefix: "+")
-                        calorieMetric("今日可用", todayBudget, prefix: "")
+                        calorieMetric(healthKit.isEnabled ? "计划额度" : "基础额度", todayBaseBudget)
+                        calorieMetric(healthKit.isEnabled ? "实时调整" : "今日运动", healthKit.isEnabled ? todayTotalAdjustment : todayExercise, signed: true, accent: true)
+                        calorieMetric("今日可用", todayBudget)
                     }
                 }
                 VStack(spacing: 5) {
@@ -377,7 +412,7 @@ struct TodayView: View {
                     .tint(AppTheme.orange)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
                     summaryNumber("基础预算", weekBudget)
-                    summaryNumber("运动增加", weekExercise, prefix: "+")
+                    summaryNumber(healthKit.isEnabled ? "动态调整" : "运动增加", weekAdjustment, signed: true)
                     summaryNumber("已摄入", weekConsumed)
                     summaryNumber("剩余", weekAvailable - weekConsumed)
                 }
@@ -425,23 +460,28 @@ struct TodayView: View {
         return weekday == 2 && hasHistory && lastDismissedReviewWeek != weekIdentifier
     }
 
-    private func summaryNumber(_ title: String, _ value: Double, prefix: String = "") -> some View {
+    private func summaryNumber(_ title: String, _ value: Double, signed: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text("\(prefix)\(Int(value.rounded())) kcal").font(.subheadline.bold().monospacedDigit())
+            Text("\(signedText(value, signed: signed)) kcal").font(.subheadline.bold().monospacedDigit())
         }
     }
 
-    private func calorieMetric(_ title: String, _ value: Double, prefix: String) -> some View {
+    private func calorieMetric(_ title: String, _ value: Double, signed: Bool = false, accent: Bool = false) -> some View {
         VStack(spacing: 3) {
             Text(title).font(.caption2).foregroundStyle(AppTheme.secondaryText)
-            Text("\(prefix)\(Int(value.rounded()))")
+            Text(signedText(value, signed: signed))
                 .font(.subheadline.bold().monospacedDigit())
-                .foregroundStyle(title == "今日运动" ? AppTheme.orange : AppTheme.textPrimary)
+                .foregroundStyle(accent ? AppTheme.orange : AppTheme.textPrimary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 9)
         .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func signedText(_ value: Double, signed: Bool) -> String {
+        let rounded = Int(value.rounded())
+        return signed && rounded > 0 ? "+\(rounded)" : "\(rounded)"
     }
 
     private func dailyTarget(for profile: UserProfile) -> Double {

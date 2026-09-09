@@ -3,11 +3,13 @@ import SwiftData
 
 struct BudgetView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var healthKit: HealthKitService
     @Query private var profiles: [UserProfile]
     @Query private var budgets: [DailyBudget]
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
+    @Query private var healthStates: [HealthIntegrationState]
 
     private let today = DateTools.day(.now)
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
@@ -19,11 +21,41 @@ struct BudgetView: View {
     private var totalBaseBudget: Double { weekBudgets.reduce(0) { $0 + $1.targetCalories } }
     private var totalExercise: Double {
         exerciseLogs
-            .filter { log in weekDays.contains(where: { DateTools.isSameDay($0, log.date) }) }
+            .filter { log in
+                weekDays.contains(where: { DateTools.isSameDay($0, log.date) })
+                    && (!healthKit.isEnabled || !DateTools.isSameDay(log.date, today) || log.isHealthSupplement)
+            }
             .reduce(0) { $0 + $1.calories }
     }
+    private var profile: UserProfile? { profiles.first }
+    private var latestWeightKG: Double { weights.first?.weightKG ?? profile?.initialWeightKG ?? 0 }
+    private var todayBaseBudget: Double {
+        weekBudgets.first(where: { DateTools.isSameDay($0.date, today) })?.targetCalories
+            ?? profile.map {
+                HealthCalculator.dailyCalorieTarget(tdee: $0.calibratedTDEE, weightKG: latestWeightKG, pace: $0.pace, sex: $0.sex)
+            }
+            ?? 0
+    }
+    private var todaySupplement: Double {
+        exerciseLogs
+            .filter { DateTools.isSameDay($0.date, today) && (!healthKit.isEnabled || $0.isHealthSupplement) }
+            .reduce(0) { $0 + $1.calories }
+    }
+    private var todayLiveHealthBudget: HealthCalculator.LiveHealthBudget? {
+        guard healthKit.isEnabled, let profile, let energy = healthKit.todayEnergy else { return nil }
+        return HealthCalculator.liveHealthBudget(
+            baseBudget: todayBaseBudget,
+            profile: profile,
+            latestWeightKG: latestWeightKG,
+            energy: energy,
+            state: healthStates.first,
+            supplementalExercise: todaySupplement
+        )
+    }
+    private var todayHealthAdjustment: Double { todayLiveHealthBudget?.healthAdjustment ?? 0 }
+    private var totalAdjustment: Double { totalExercise + todayHealthAdjustment }
     private var totalAvailable: Double {
-        CalorieMath.availableCalories(base: totalBaseBudget, exercise: totalExercise)
+        max(0, totalBaseBudget + totalAdjustment)
     }
     private var totalConsumed: Double {
         foodLogs
@@ -69,7 +101,7 @@ struct BudgetView: View {
                     .tint(AppTheme.orange)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
                     summaryMetric("基础预算", totalBaseBudget)
-                    summaryMetric("运动增加", totalExercise, prefix: "+")
+                    summaryMetric(healthKit.isEnabled ? "动态调整" : "运动增加", totalAdjustment, signed: true)
                     summaryMetric("实际可用", totalAvailable)
                     summaryMetric("已摄入", totalConsumed)
                 }
@@ -98,10 +130,12 @@ struct BudgetView: View {
 
     private func dayCard(_ budget: DailyBudget) -> some View {
         let exercise = exercise(on: budget.date)
-        let available = CalorieMath.availableCalories(base: budget.targetCalories, exercise: exercise)
+        let isToday = DateTools.isSameDay(budget.date, today)
+        let healthAdjustment = isToday ? todayHealthAdjustment : 0
+        let adjustment = exercise + healthAdjustment
+        let available = max(0, budget.targetCalories + adjustment)
         let consumed = consumed(on: budget.date)
         let remaining = available - consumed
-        let isToday = DateTools.isSameDay(budget.date, today)
         let isPast = budget.date < today
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -135,7 +169,7 @@ struct BudgetView: View {
                 .tint(isPast ? .secondary : AppTheme.green)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
                 compactMetric("基础", budget.targetCalories)
-                compactMetric("运动", exercise, prefix: "+")
+                compactMetric(isToday && healthKit.isEnabled ? "动态" : "运动", adjustment, signed: true)
                 compactMetric("摄入", consumed)
                 compactMetric("剩余", remaining)
             }
@@ -148,20 +182,20 @@ struct BudgetView: View {
         }
     }
 
-    private func summaryMetric(_ title: String, _ value: Double, prefix: String = "") -> some View {
+    private func summaryMetric(_ title: String, _ value: Double, signed: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Text("\(prefix)\(Int(value.rounded())) kcal")
+            Text("\(signedText(value, signed: signed)) kcal")
                 .font(.subheadline.bold().monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
     }
 
-    private func compactMetric(_ title: String, _ value: Double, prefix: String = "") -> some View {
+    private func compactMetric(_ title: String, _ value: Double, signed: Bool = false) -> some View {
         HStack(spacing: 5) {
             Text(title).foregroundStyle(AppTheme.secondaryText)
-            Text("\(prefix)\(Int(value.rounded()))")
+            Text(signedText(value, signed: signed))
                 .fontWeight(.semibold)
                 .foregroundStyle(AppTheme.textPrimary)
         }
@@ -173,7 +207,17 @@ struct BudgetView: View {
     }
 
     private func exercise(on date: Date) -> Double {
-        exerciseLogs.filter { DateTools.isSameDay($0.date, date) }.reduce(0) { $0 + $1.calories }
+        exerciseLogs
+            .filter {
+                DateTools.isSameDay($0.date, date)
+                    && (!healthKit.isEnabled || !DateTools.isSameDay(date, today) || $0.isHealthSupplement)
+            }
+            .reduce(0) { $0 + $1.calories }
+    }
+
+    private func signedText(_ value: Double, signed: Bool) -> String {
+        let rounded = Int(value.rounded())
+        return signed && rounded > 0 ? "+\(rounded)" : "\(rounded)"
     }
 
     private func weekdayText(_ date: Date) -> String {
@@ -205,8 +249,12 @@ struct BudgetView: View {
 
 private struct DailyLogDetailView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var healthKit: HealthKitService
+    @Query private var profiles: [UserProfile]
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
+    @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
+    @Query private var healthStates: [HealthIntegrationState]
 
     let date: Date
     let baseBudget: Double
@@ -219,6 +267,9 @@ private struct DailyLogDetailView: View {
     @State private var deletingExercise: ExerciseLogEntry?
 
     private var editable: Bool { DateTools.canEditLogs(on: date) }
+    private var isToday: Bool { DateTools.isSameDay(date, .now) }
+    private var profile: UserProfile? { profiles.first }
+    private var latestWeightKG: Double { weights.first?.weightKG ?? profile?.initialWeightKG ?? 0 }
     private var dayFoodLogs: [FoodLogEntry] {
         foodLogs
             .filter { DateTools.isSameDay($0.date, date) }
@@ -230,8 +281,32 @@ private struct DailyLogDetailView: View {
             .sorted { $0.createdAt < $1.createdAt }
     }
     private var consumed: Double { dayFoodLogs.reduce(0) { $0 + $1.calories } }
-    private var exercise: Double { dayExerciseLogs.reduce(0) { $0 + $1.calories } }
-    private var available: Double { CalorieMath.availableCalories(base: baseBudget, exercise: exercise) }
+    private var exercise: Double {
+        dayExerciseLogs
+            .filter { !healthKit.isEnabled || !isToday || $0.isHealthSupplement }
+            .reduce(0) { $0 + $1.calories }
+    }
+    private var liveHealthBudget: HealthCalculator.LiveHealthBudget? {
+        guard isToday,
+              healthKit.isEnabled,
+              let profile,
+              let energy = healthKit.todayEnergy else { return nil }
+        return HealthCalculator.liveHealthBudget(
+            baseBudget: baseBudget,
+            profile: profile,
+            latestWeightKG: latestWeightKG,
+            energy: energy,
+            state: healthStates.first,
+            supplementalExercise: exercise
+        )
+    }
+    private var adjustment: Double {
+        liveHealthBudget?.adjustmentFromBase ?? exercise
+    }
+    private var available: Double {
+        liveHealthBudget?.availableCalories
+            ?? CalorieMath.availableCalories(base: baseBudget, exercise: exercise)
+    }
     private var remaining: Double { available - consumed }
 
     var body: some View {
@@ -257,7 +332,12 @@ private struct DailyLogDetailView: View {
         }
         .sheet(isPresented: $addingExercise) {
             ExerciseEntrySheet(date: date) { type, calories in
-                modelContext.insert(ExerciseLogEntry(date: date, type: type, calories: calories))
+                modelContext.insert(ExerciseLogEntry(
+                    date: date,
+                    type: type,
+                    calories: calories,
+                    isHealthSupplement: healthKit.isEnabled && isToday
+                ))
                 try? modelContext.save()
             }
             .presentationDetents([.large])
@@ -270,6 +350,7 @@ private struct DailyLogDetailView: View {
             ExerciseEntrySheet(date: date, entry: entry) { type, calories in
                 entry.type = type
                 entry.calories = calories
+                if healthKit.isEnabled && isToday { entry.isHealthSupplement = true }
                 try? modelContext.save()
             }
             .presentationDetents([.large])
@@ -317,8 +398,8 @@ private struct DailyLogDetailView: View {
                 SwiftUI.ProgressView(value: min(consumed, max(available, 1)), total: max(available, 1))
                     .tint(AppTheme.orange)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 10) {
-                    detailMetric("基础预算", baseBudget)
-                    detailMetric("运动增加", exercise, prefix: "+")
+                    detailMetric(isToday && healthKit.isEnabled ? "计划额度" : "基础预算", baseBudget)
+                    detailMetric(isToday && healthKit.isEnabled ? "动态调整" : "运动增加", adjustment, signed: true)
                     detailMetric("实际可用", available)
                     detailMetric("已摄入", consumed)
                 }
@@ -475,14 +556,19 @@ private struct DailyLogDetailView: View {
         }
     }
 
-    private func detailMetric(_ title: String, _ value: Double, prefix: String = "") -> some View {
+    private func detailMetric(_ title: String, _ value: Double, signed: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Text("\(prefix)\(Int(value.rounded())) kcal")
+            Text("\(signedText(value, signed: signed)) kcal")
                 .font(.subheadline.bold().monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
+    }
+
+    private func signedText(_ value: Double, signed: Bool) -> String {
+        let rounded = Int(value.rounded())
+        return signed && rounded > 0 ? "+\(rounded)" : "\(rounded)"
     }
 
     private var weekdayText: String {

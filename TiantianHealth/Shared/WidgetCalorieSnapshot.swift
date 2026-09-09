@@ -37,7 +37,7 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
             return WidgetCalorieDay(
                 date: date,
                 baseBudget: entries.first?.baseBudget ?? fallbackDailyBudget,
-                exercise: entries.reduce(0) { $0 + max(0, $1.exercise) },
+                exercise: entries.reduce(0) { $0 + $1.exercise },
                 consumed: entries.reduce(0) { $0 + max(0, $1.consumed) }
             )
         }
@@ -46,10 +46,10 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
         let weekValues = weekDates.map(values(for:))
         return WidgetCalorieMetrics(
             todayBaseBudget: max(0, todayValues.baseBudget),
-            todayExercise: max(0, todayValues.exercise),
+            todayExercise: todayValues.exercise,
             todayConsumed: max(0, todayValues.consumed),
             weekBaseBudget: weekValues.reduce(0) { $0 + max(0, $1.baseBudget) },
-            weekExercise: weekValues.reduce(0) { $0 + max(0, $1.exercise) },
+            weekExercise: weekValues.reduce(0) { $0 + $1.exercise },
             weekConsumed: weekValues.reduce(0) { $0 + max(0, $1.consumed) }
         )
     }
@@ -76,9 +76,9 @@ struct WidgetCalorieMetrics: Hashable {
     let weekExercise: Double
     let weekConsumed: Double
 
-    var todayAvailable: Double { todayBaseBudget + todayExercise }
+    var todayAvailable: Double { max(0, todayBaseBudget + todayExercise) }
     var todayRemaining: Double { todayAvailable - todayConsumed }
-    var weekAvailable: Double { weekBaseBudget + weekExercise }
+    var weekAvailable: Double { max(0, weekBaseBudget + weekExercise) }
     var weekRemaining: Double { weekAvailable - weekConsumed }
 }
 

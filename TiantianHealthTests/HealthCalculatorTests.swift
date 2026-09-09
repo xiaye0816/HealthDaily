@@ -224,6 +224,49 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(CalorieMath.availableCalories(base: 1_850, exercise: -50), 1_850, accuracy: 0.001)
     }
 
+    func testLiveHealthBudgetProjectsFullDayAndPreservesPlannedDeficit() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let noon = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 9,
+            day: 10,
+            hour: 12
+        )))
+
+        let result = try XCTUnwrap(HealthCalculator.liveHealthBudget(
+            baseBudget: 1_800,
+            plannedTDEE: 2_200,
+            currentResting: 900,
+            currentActive: 200,
+            typicalResting: 1_800,
+            typicalActive: 400,
+            supplementalExercise: 100,
+            minimumCalories: 1_500,
+            at: noon,
+            calendar: calendar
+        ))
+
+        XCTAssertEqual(result.projectedExpenditure, 2_200, accuracy: 0.001)
+        XCTAssertEqual(result.plannedDeficit, 400, accuracy: 0.001)
+        XCTAssertEqual(result.availableCalories, 1_900, accuracy: 0.001)
+        XCTAssertEqual(result.adjustmentFromBase, 100, accuracy: 0.001)
+        XCTAssertEqual(result.healthAdjustment, 0, accuracy: 0.001)
+    }
+
+    func testLiveHealthBudgetRequiresAtLeastOneCurrentHealthValue() {
+        XCTAssertNil(HealthCalculator.liveHealthBudget(
+            baseBudget: 1_800,
+            plannedTDEE: 2_200,
+            currentResting: nil,
+            currentActive: nil,
+            typicalResting: 1_800,
+            typicalActive: 400,
+            supplementalExercise: 0,
+            minimumCalories: 1_500
+        ))
+    }
+
     func testKilocalorieKilojouleRoundTrip() {
         let kilojoules = CalorieMath.kilojoules(fromKilocalories: 250)
         XCTAssertEqual(kilojoules, 1_046, accuracy: 0.001)
@@ -281,6 +324,22 @@ final class HealthCalculatorTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.metrics(on: now).todayRemaining, -200, accuracy: 0.001)
+    }
+
+    func testWidgetMetricsPreserveSignedLiveHealthAdjustment() {
+        let now = Date.now
+        let snapshot = WidgetCalorieSnapshot(
+            generatedAt: now,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_700,
+            days: [WidgetCalorieDay(date: now, baseBudget: 1_700, exercise: -250, consumed: 1_000)]
+        )
+
+        let metrics = snapshot.metrics(on: now)
+        XCTAssertEqual(metrics.todayExercise, -250, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayAvailable, 1_450, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayRemaining, 450, accuracy: 0.001)
+        XCTAssertEqual(metrics.weekExercise, -250, accuracy: 0.001)
     }
 
     func testWidgetSnapshotStoreDoesNotRewriteUnchangedContentAndCanClear() {

@@ -91,7 +91,7 @@ final class HealthKitService: ObservableObject {
         do {
             async let today = loadTodayEnergy()
             async let history = loadDailyEnergy(days: 28)
-            async let weights = loadWeights()
+            async let weights = loadWeights(days: 30)
             let values = try await (today, history, weights)
             todayEnergy = values.0
             dailyEnergy = values.1
@@ -172,11 +172,19 @@ final class HealthKitService: ObservableObject {
         }
     }
 
-    private func loadWeights() async throws -> [HealthWeightSample] {
+    private func loadWeights(days: Int) async throws -> [HealthWeightSample] {
         try await withCheckedThrowingContinuation { continuation in
+            let now = Date.now
+            let today = Calendar.current.startOfDay(for: now)
+            let start = Calendar.current.date(byAdding: .day, value: -max(0, days - 1), to: today) ?? today
+            let predicate = HKQuery.predicateForSamples(
+                withStart: start,
+                end: now,
+                options: [.strictStartDate, .strictEndDate]
+            )
             let query = HKSampleQuery(
                 sampleType: bodyMassType,
-                predicate: nil,
+                predicate: predicate,
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
             ) { _, samples, error in

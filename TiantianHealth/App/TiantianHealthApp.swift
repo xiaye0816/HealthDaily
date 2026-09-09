@@ -192,14 +192,52 @@ struct RootView: View {
     @State private var isShowingSplash = true
     @State private var splashOpacity = 1.0
 
+    private var currentProfile: UserProfile? { profiles.first }
+    private var latestWeightKG: Double {
+        weights.first?.weightKG ?? currentProfile?.initialWeightKG ?? 0
+    }
+    private var todayBaseBudget: Double {
+        let today = DateTools.day(.now)
+        return budgets.first(where: { DateTools.isSameDay($0.date, today) })?.targetCalories
+            ?? currentProfile.map {
+                HealthCalculator.dailyCalorieTarget(
+                    tdee: $0.calibratedTDEE,
+                    weightKG: latestWeightKG,
+                    pace: $0.pace,
+                    sex: $0.sex
+                )
+            }
+            ?? 0
+    }
+    private var todaySupplementalExercise: Double {
+        exerciseLogs
+            .filter { DateTools.isSameDay($0.date, .now) && (!healthKit.isEnabled || $0.isHealthSupplement) }
+            .reduce(0) { $0 + $1.calories }
+    }
+    private var widgetTodayAvailableOverride: Double? {
+        guard healthKit.isEnabled,
+              let profile = currentProfile,
+              let energy = healthKit.todayEnergy else { return nil }
+        return HealthCalculator.liveHealthBudget(
+            baseBudget: todayBaseBudget,
+            profile: profile,
+            latestWeightKG: latestWeightKG,
+            energy: energy,
+            state: healthStates.first,
+            supplementalExercise: todaySupplementalExercise
+        )?.availableCalories
+    }
+
     private var widgetSnapshotSource: WidgetSnapshotSource {
         WidgetSnapshotSource(
             isOnboarded: hasCompletedOnboarding,
-            profile: profiles.first,
-            latestWeightKG: weights.first?.weightKG,
+            profile: currentProfile,
+            latestWeightKG: latestWeightKG,
             budgets: budgets,
             foodLogs: foodLogs,
-            exerciseLogs: exerciseLogs
+            exerciseLogs: exerciseLogs,
+            healthIntegrationEnabled: healthKit.isEnabled,
+            todayAvailableOverride: widgetTodayAvailableOverride
         )
     }
 

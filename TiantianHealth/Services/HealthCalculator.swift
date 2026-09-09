@@ -8,6 +8,17 @@ enum HealthCalculator {
         let validDayCount: Int
         let confidence: Double
     }
+
+    struct LiveHealthBudget: Equatable {
+        let baseBudget: Double
+        let projectedExpenditure: Double
+        let plannedDeficit: Double
+        let supplementalExercise: Double
+        let availableCalories: Double
+
+        var adjustmentFromBase: Double { availableCalories - baseBudget }
+        var healthAdjustment: Double { adjustmentFromBase - supplementalExercise }
+    }
     static func age(from birthDate: Date, on referenceDate: Date = .now) -> Int {
         max(0, Calendar.current.dateComponents([.year], from: birthDate, to: referenceDate).year ?? 0)
     }
@@ -101,8 +112,12 @@ enum HealthCalculator {
     }
 
     static func dailyCalorieTarget(tdee: Double, weightKG: Double, pace: GoalPace, sex: BiologicalSex) -> Double {
-        let minimum = sex == .female ? 1_200.0 : 1_500.0
+        let minimum = minimumDailyCalories(for: sex)
         return max(minimum, roundedTo50(tdee - desiredDailyDeficit(weightKG: weightKG, pace: pace)))
+    }
+
+    static func minimumDailyCalories(for sex: BiologicalSex) -> Double {
+        sex == .female ? 1_200 : 1_500
     }
 
     static func roundedTo50(_ value: Double) -> Double {
@@ -177,6 +192,83 @@ enum HealthCalculator {
         let healthTotal = resting + active
         let total = fallbackTDEE * (1 - confidence) + healthTotal * confidence
         return AppleHealthBaseline(resting: resting, active: active, total: total, validDayCount: valid.count, confidence: confidence)
+    }
+
+    static func liveHealthBudget(
+        baseBudget: Double,
+        plannedTDEE: Double,
+        currentResting: Double?,
+        currentActive: Double?,
+        typicalResting: Double,
+        typicalActive: Double,
+        supplementalExercise: Double,
+        minimumCalories: Double,
+        at date: Date = .now,
+        calendar: Calendar = .current
+    ) -> LiveHealthBudget? {
+        guard currentResting != nil || currentActive != nil,
+              let day = calendar.dateInterval(of: .day, for: date),
+              day.duration > 0 else { return nil }
+
+        let elapsed = min(1, max(0, date.timeIntervalSince(day.start) / day.duration))
+        let remaining = 1 - elapsed
+
+        func projected(_ current: Double?, typical: Double) -> Double {
+            let typical = max(0, typical)
+            guard let current else { return typical }
+            return max(0, current) + typical * remaining
+        }
+
+        let projectedExpenditure = projected(currentResting, typical: typicalResting)
+            + projected(currentActive, typical: typicalActive)
+        guard projectedExpenditure.isFinite, projectedExpenditure > 0 else { return nil }
+
+        let deficit = plannedDeficit(tdee: plannedTDEE, calorieTarget: baseBudget)
+        let liveTarget = max(minimumCalories, projectedExpenditure - deficit)
+        let supplement = max(0, supplementalExercise)
+        return LiveHealthBudget(
+            baseBudget: baseBudget,
+            projectedExpenditure: projectedExpenditure,
+            plannedDeficit: deficit,
+            supplementalExercise: supplement,
+            availableCalories: liveTarget + supplement
+        )
+    }
+
+    static func liveHealthBudget(
+        baseBudget: Double,
+        profile: UserProfile,
+        latestWeightKG: Double,
+        energy: HealthEnergySnapshot,
+        state: HealthIntegrationState?,
+        supplementalExercise: Double,
+        at date: Date = .now,
+        calendar: Calendar = .current
+    ) -> LiveHealthBudget? {
+        let formulaResting = restingEnergy(
+            sex: profile.sex,
+            age: profile.currentAge,
+            heightCM: profile.heightCM,
+            weightKG: latestWeightKG
+        )
+        let typicalResting = max(0, state?.typicalRestingEnergy ?? 0) > 0
+            ? max(0, state?.typicalRestingEnergy ?? 0)
+            : formulaResting
+        let typicalActive = (state?.validDayCount ?? 0) > 0
+            ? max(0, state?.typicalActiveEnergy ?? 0)
+            : max(0, profile.calibratedTDEE - formulaResting)
+        return liveHealthBudget(
+            baseBudget: baseBudget,
+            plannedTDEE: profile.calibratedTDEE,
+            currentResting: energy.resting,
+            currentActive: energy.active,
+            typicalResting: typicalResting,
+            typicalActive: typicalActive,
+            supplementalExercise: supplementalExercise,
+            minimumCalories: minimumDailyCalories(for: profile.sex),
+            at: date,
+            calendar: calendar
+        )
     }
 
     private static func median(_ values: [Double]) -> Double {

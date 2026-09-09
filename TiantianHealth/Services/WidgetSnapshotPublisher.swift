@@ -20,6 +20,8 @@ struct WidgetSnapshotSource: Hashable {
         budgets: [DailyBudget],
         foodLogs: [FoodLogEntry],
         exerciseLogs: [ExerciseLogEntry],
+        healthIntegrationEnabled: Bool = false,
+        todayAvailableOverride: Double? = nil,
         referenceDate: Date = .now
     ) {
         self.isOnboarded = isOnboarded && profile != nil
@@ -35,12 +37,22 @@ struct WidgetSnapshotSource: Hashable {
 
         let weekDays = DateTools.weekDays(containing: referenceDate)
         days = weekDays.map { date in
-            Day(
+            let isToday = DateTools.isSameDay(date, referenceDate)
+            let baseBudget = budgets.first(where: { DateTools.isSameDay($0.date, date) })?.targetCalories ?? fallback
+            let recordedExercise = exerciseLogs
+                .filter {
+                    DateTools.isSameDay($0.date, date)
+                        && (!healthIntegrationEnabled || !isToday || $0.isHealthSupplement)
+                }
+                .reduce(0) { $0 + max(0, $1.calories) }
+            return Day(
                 date: DateTools.day(date),
-                baseBudget: budgets.first(where: { DateTools.isSameDay($0.date, date) })?.targetCalories ?? fallback,
-                exercise: exerciseLogs
-                    .filter { DateTools.isSameDay($0.date, date) }
-                    .reduce(0) { $0 + max(0, $1.calories) },
+                baseBudget: baseBudget,
+                // Keep the existing serialized field for backward compatibility. On
+                // the current Health day it carries the signed live adjustment.
+                exercise: isToday
+                    ? todayAvailableOverride.map { $0 - baseBudget } ?? recordedExercise
+                    : recordedExercise,
                 consumed: foodLogs
                     .filter { DateTools.isSameDay($0.date, date) }
                     .reduce(0) { $0 + max(0, $1.calories) }

@@ -7,7 +7,7 @@ struct ProgressView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var healthKit: HealthKitService
     @Query private var profiles: [UserProfile]
-    @Query(sort: \WeightEntry.date) private var weights: [WeightEntry]
+    @Query private var weights: [WeightEntry]
     @Query private var healthStates: [HealthIntegrationState]
 
     @State private var editingEntry: WeightEntry?
@@ -16,13 +16,35 @@ struct ProgressView: View {
     @State private var selectedWeightID: UUID?
     @State private var weightOperationError: String?
 
+    init(referenceDate: Date = .now) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: referenceDate)
+        let cutoff = calendar.date(byAdding: .day, value: -29, to: today) ?? today
+        var descriptor = FetchDescriptor<WeightEntry>(
+            predicate: #Predicate { entry in
+                entry.date >= cutoff && entry.date <= referenceDate
+            },
+            sortBy: [SortDescriptor(\WeightEntry.date)]
+        )
+        descriptor.fetchLimit = 31
+        _weights = Query(descriptor)
+    }
+
     private var profile: UserProfile? { profiles.first }
+    private var recentWeightCutoff: Date {
+        Calendar.current.date(byAdding: .day, value: -29, to: DateTools.day(.now)) ?? DateTools.day(.now)
+    }
     private var measurements: [WeightMeasurement] {
-        let local = weights.map {
+        let now = Date.now
+        let local = weights.filter {
+            let measuredAt = $0.measuredAt ?? $0.date
+            return measuredAt >= recentWeightCutoff && measuredAt <= now
+        }.map {
             WeightMeasurement(id: $0.id, date: DateTools.day($0.date), measuredAt: $0.measuredAt ?? $0.date, weightKG: $0.weightKG, source: .local, localEntryID: $0.id)
         }
         let localSyncIDs = Set(weights.compactMap(\.healthSyncIdentifier))
         let health = healthKit.healthWeights.compactMap { sample -> WeightMeasurement? in
+            guard sample.measuredAt >= recentWeightCutoff, sample.measuredAt <= now else { return nil }
             if let sync = sample.syncIdentifier, localSyncIDs.contains(sync) { return nil }
             return WeightMeasurement(id: sample.id, date: DateTools.day(sample.measuredAt), measuredAt: sample.measuredAt, weightKG: sample.weightKG, source: .appleHealth, localEntryID: nil)
         }
@@ -324,7 +346,7 @@ struct ProgressView: View {
                     let dailyDeficit = HealthCalculator.plannedDeficit(tdee: profile.calibratedTDEE, calorieTarget: dailyTarget)
                     expenditureRow("静息消耗", resting)
                     expenditureRow(healthKit.isEnabled ? "典型活动" : "日常步数", activity)
-                    Label(healthKit.isEnabled ? "今日实时消耗只用于反馈，完整日数据从明天校准预算。" : "实际运动会在发生当天单独增加可用额度，不计入固定基准。", systemImage: "figure.run")
+                    Label(healthKit.isEnabled ? "今日额度按预计全天消耗减去计划缺口实时变化；完整日数据从明天校准基础预算。" : "实际运动会在发生当天单独增加可用额度，不计入固定基准。", systemImage: "figure.run")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                         .padding(.vertical, 3)
@@ -358,7 +380,12 @@ struct ProgressView: View {
 
     private var historyCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("记录历史").font(.title3.bold()).padding(.horizontal, 2)
+            HStack {
+                Text("记录历史").font(.title3.bold())
+                Spacer()
+                Text("最近 30 天").font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 2)
             HealthCard {
                 if measurements.isEmpty {
                     EmptyStateView(symbol: "scalemass", title: "从今天开始", message: "建议在相近时间、相近条件下称重。")
