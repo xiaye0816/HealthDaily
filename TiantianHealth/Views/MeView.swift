@@ -4,6 +4,7 @@ import SwiftData
 struct MeView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var healthKit: HealthKitService
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("lastDismissedReviewWeek") private var lastDismissedReviewWeek = ""
     @AppStorage("didMigrateActualExerciseV1") private var didMigrateActualExerciseV1 = false
@@ -14,6 +15,7 @@ struct MeView: View {
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var budgets: [DailyBudget]
+    @Query private var healthStates: [HealthIntegrationState]
     @State private var showingResetConfirmation = false
 
     var body: some View {
@@ -50,6 +52,15 @@ struct MeView: View {
                     Section("快捷记录") {
                         NavigationLink { FoodLibraryView() } label: {
                             settingsLabel("我的食材库", symbol: "fork.knife", detail: "\(presets.count) 项")
+                        }
+                    }
+                    Section("健康数据") {
+                        NavigationLink { HealthConnectionView() } label: {
+                            settingsLabel(
+                                "Apple 健康",
+                                symbol: "heart.fill",
+                                detail: healthKit.isEnabled ? "已连接 · 实时消耗与体重" : "未连接"
+                            )
                         }
                     }
                     Section("工具") {
@@ -103,11 +114,13 @@ struct MeView: View {
         workouts.forEach(modelContext.delete)
         presets.forEach(modelContext.delete)
         profiles.forEach(modelContext.delete)
+        healthStates.forEach(modelContext.delete)
 
         do {
             try modelContext.save()
             lastDismissedReviewWeek = ""
             didMigrateActualExerciseV1 = false
+            healthKit.disconnect()
             router.clearPendingShortcut()
             WidgetSnapshotPublisher.clear()
             withAnimation(.easeInOut(duration: 0.3)) {
@@ -133,6 +146,118 @@ struct MeView: View {
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
+        }
+    }
+}
+
+private struct HealthConnectionView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var healthKit: HealthKitService
+    @Query private var states: [HealthIntegrationState]
+    @State private var actionFeedback = 0
+
+    private var state: HealthIntegrationState? { states.first }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                HealthCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 13) {
+                            Image(systemName: "heart.fill")
+                                .font(.title2)
+                                .foregroundStyle(healthKit.isEnabled ? AppTheme.green : AppTheme.secondaryText)
+                                .frame(width: 48, height: 48)
+                                .background(AppTheme.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(healthKit.isEnabled ? "已连接 Apple 健康" : "连接 Apple 健康")
+                                    .font(.headline)
+                                Text(healthKit.isEnabled ? "今日消耗在 App 前台自动更新" : "使用健康数据替代单纯公式估算")
+                                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                            }
+                        }
+                        Divider()
+                        Label("读取：静息能量、活动能量、体重", systemImage: "arrow.down.circle")
+                        Label("写入：你在天天健康中新增或修改的体重", systemImage: "arrow.up.circle")
+                        if let last = state?.lastSyncedAt {
+                            Text("最近同步：\(last.formatted(.dateTime.month().day().hour().minute()))")
+                                .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                }
+
+                if let state, state.validDayCount > 0 {
+                    HealthCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("当前健康基准").font(.headline)
+                            HStack {
+                                healthMetric("静息", state.typicalRestingEnergy)
+                                Spacer()
+                                healthMetric("活动", state.typicalActiveEnergy)
+                                Spacer()
+                                healthMetric("有效天数", Double(state.validDayCount), suffix: "天")
+                            }
+                        }
+                    }
+                }
+
+                if let error = healthKit.lastErrorMessage {
+                    Label(error, systemImage: "exclamationmark.circle")
+                        .font(.footnote).foregroundStyle(AppTheme.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button {
+                    Task {
+                        if healthKit.isEnabled {
+                            await healthKit.refreshAll()
+                        } else if await healthKit.connect() {
+                            let value = state ?? HealthIntegrationState()
+                            if state == nil { modelContext.insert(value) }
+                            value.isEnabled = true
+                            value.lastSyncedAt = .now
+                            try? modelContext.save()
+                        }
+                        actionFeedback += 1
+                    }
+                } label: {
+                    if healthKit.isRefreshing {
+                        ProgressView().tint(.white)
+                    } else {
+                        Label(healthKit.isEnabled ? "立即同步" : "连接 Apple 健康", systemImage: healthKit.isEnabled ? "arrow.clockwise" : "heart.fill")
+                    }
+                }
+                .buttonStyle(BrandButtonStyle())
+                .disabled(healthKit.isRefreshing)
+                .sensoryFeedback(.success, trigger: actionFeedback)
+
+                if healthKit.isEnabled {
+                    Button("停止在天天健康中使用") {
+                        healthKit.disconnect()
+                        state?.isEnabled = false
+                        state?.pendingBaselineTDEE = nil
+                        state?.pendingEffectiveDate = nil
+                        try? modelContext.save()
+                    }
+                    .foregroundStyle(AppTheme.secondaryText)
+                }
+
+                Text("停止使用或重置 App 不会删除 Apple 健康中的记录。读取权限可在系统健康 App 中修改。")
+                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            .padding(18)
+        }
+        .background(AppTheme.background)
+        .navigationTitle("Apple 健康")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func healthMetric(_ title: String, _ value: Double, suffix: String = "kcal") -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(AppTheme.secondaryText)
+            Text("\(Int(value.rounded())) \(suffix)").font(.subheadline.bold().monospacedDigit())
         }
     }
 }

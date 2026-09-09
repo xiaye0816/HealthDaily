@@ -1,6 +1,13 @@
 import Foundation
 
 enum HealthCalculator {
+    struct AppleHealthBaseline: Equatable {
+        let resting: Double
+        let active: Double
+        let total: Double
+        let validDayCount: Int
+        let confidence: Double
+    }
     static func age(from birthDate: Date, on referenceDate: Date = .now) -> Int {
         max(0, Calendar.current.dateComponents([.year], from: birthDate, to: referenceDate).year ?? 0)
     }
@@ -103,6 +110,19 @@ enum HealthCalculator {
     }
 
     static func trendPoints(from entries: [WeightEntry], alpha: Double = 0.25) -> [WeightPoint] {
+        trendPoints(from: entries.map {
+            WeightMeasurement(
+                id: $0.id,
+                date: $0.date,
+                measuredAt: $0.measuredAt ?? $0.date,
+                weightKG: $0.weightKG,
+                source: .local,
+                localEntryID: $0.id
+            )
+        }, alpha: alpha)
+    }
+
+    static func trendPoints(from entries: [WeightMeasurement], alpha: Double = 0.25) -> [WeightPoint] {
         let sorted = entries.sorted { $0.date < $1.date }
         var previous: Double?
         return sorted.map { entry in
@@ -110,6 +130,60 @@ enum HealthCalculator {
             previous = trend
             return WeightPoint(id: entry.id, date: entry.date, rawKG: entry.weightKG, trendKG: trend)
         }
+    }
+
+    static func latestWeightMeasurementsPerDay(
+        _ measurements: [WeightMeasurement],
+        calendar: Calendar = .current
+    ) -> [WeightMeasurement] {
+        Dictionary(grouping: measurements) { calendar.startOfDay(for: $0.date) }
+            .values
+            .compactMap { day in
+                day.max { lhs, rhs in
+                    if lhs.measuredAt != rhs.measuredAt {
+                        return lhs.measuredAt < rhs.measuredAt
+                    }
+                    if lhs.source != rhs.source {
+                        return lhs.source == .appleHealth && rhs.source == .local
+                    }
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+            }
+            .sorted {
+                if calendar.isDate($0.date, inSameDayAs: $1.date) {
+                    return $0.measuredAt < $1.measuredAt
+                }
+                return $0.date < $1.date
+            }
+    }
+
+    static func appleHealthBaseline(
+        days: [HealthDailyEnergy],
+        fallbackTDEE: Double,
+        maximumDays: Int = 14,
+        fullConfidenceDays: Int = 7
+    ) -> AppleHealthBaseline? {
+        let valid = days
+            .filter { day in
+                guard let resting = day.resting, let active = day.active else { return false }
+                return resting > 0 && active >= 0
+            }
+            .sorted { $0.date < $1.date }
+            .suffix(maximumDays)
+        guard !valid.isEmpty else { return nil }
+        let resting = median(valid.compactMap(\.resting))
+        let active = median(valid.compactMap(\.active))
+        let confidence = min(1, Double(valid.count) / Double(max(1, fullConfidenceDays)))
+        let healthTotal = resting + active
+        let total = fallbackTDEE * (1 - confidence) + healthTotal * confidence
+        return AppleHealthBaseline(resting: resting, active: active, total: total, validDayCount: valid.count, confidence: confidence)
+    }
+
+    private static func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        guard !sorted.isEmpty else { return 0 }
+        let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
     }
 
     static func weightChartDomain(points: [WeightPoint], referenceValues: [Double] = []) -> ClosedRange<Double>? {

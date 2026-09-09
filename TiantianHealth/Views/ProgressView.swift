@@ -5,17 +5,31 @@ import Charts
 struct ProgressView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var healthKit: HealthKitService
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date) private var weights: [WeightEntry]
+    @Query private var healthStates: [HealthIntegrationState]
 
     @State private var editingEntry: WeightEntry?
     @State private var addingWeight = false
     @State private var deletingEntry: WeightEntry?
     @State private var selectedWeightID: UUID?
+    @State private var weightOperationError: String?
 
     private var profile: UserProfile? { profiles.first }
-    private var points: [WeightPoint] { HealthCalculator.trendPoints(from: weights) }
-    private var latestWeight: Double { weights.last?.weightKG ?? profile?.initialWeightKG ?? 0 }
+    private var measurements: [WeightMeasurement] {
+        let local = weights.map {
+            WeightMeasurement(id: $0.id, date: DateTools.day($0.date), measuredAt: $0.measuredAt ?? $0.date, weightKG: $0.weightKG, source: .local, localEntryID: $0.id)
+        }
+        let localSyncIDs = Set(weights.compactMap(\.healthSyncIdentifier))
+        let health = healthKit.healthWeights.compactMap { sample -> WeightMeasurement? in
+            if let sync = sample.syncIdentifier, localSyncIDs.contains(sync) { return nil }
+            return WeightMeasurement(id: sample.id, date: DateTools.day(sample.measuredAt), measuredAt: sample.measuredAt, weightKG: sample.weightKG, source: .appleHealth, localEntryID: nil)
+        }
+        return HealthCalculator.latestWeightMeasurementsPerDay(local + health)
+    }
+    private var points: [WeightPoint] { HealthCalculator.trendPoints(from: measurements) }
+    private var latestWeight: Double { measurements.last?.weightKG ?? profile?.initialWeightKG ?? 0 }
     private var unit: WeightUnit { profile?.weightUnit ?? .kg }
     private var highestWeightKG: Double? { points.map(\.rawKG).max() }
     private var targetWeightKG: Double? { profile?.targetWeightKG }
@@ -73,10 +87,20 @@ struct ProgressView: View {
             }
             .confirmationDialog("删除这条体重记录？", isPresented: Binding(get: { deletingEntry != nil }, set: { if !$0 { deletingEntry = nil } }), titleVisibility: .visible) {
                 Button("删除", role: .destructive) {
-                    if let deletingEntry { modelContext.delete(deletingEntry); try? modelContext.save() }
+                    if let deletingEntry {
+                        Task { await deleteWeight(deletingEntry) }
+                    }
                     deletingEntry = nil
                 }
                 Button("取消", role: .cancel) { deletingEntry = nil }
+            }
+            .alert("无法删除体重", isPresented: Binding(
+                get: { weightOperationError != nil },
+                set: { if !$0 { weightOperationError = nil } }
+            )) {
+                Button("好") { weightOperationError = nil }
+            } message: {
+                Text(weightOperationError ?? "请稍后重试")
             }
             .onAppear { handlePendingShortcut() }
             .onChange(of: router.pendingQuickAction) { _, _ in handlePendingShortcut() }
@@ -290,12 +314,17 @@ struct ProgressView: View {
                 }
                 Divider()
                 if let profile {
-                    let resting = HealthCalculator.restingEnergy(sex: profile.sex, age: profile.currentAge, heightCM: profile.heightCM, weightKG: latestWeight)
+                    let healthState = healthStates.first
+                    let formulaResting = HealthCalculator.restingEnergy(sex: profile.sex, age: profile.currentAge, heightCM: profile.heightCM, weightKG: latestWeight)
+                    let resting = healthKit.isEnabled && (healthState?.typicalRestingEnergy ?? 0) > 0 ? healthState!.typicalRestingEnergy : formulaResting
+                    let activity = healthKit.isEnabled && (healthState?.typicalActiveEnergy ?? 0) > 0
+                        ? healthState!.typicalActiveEnergy
+                        : HealthCalculator.stepEnergy(restingEnergy: formulaResting, averageSteps: profile.averageSteps)
                     let dailyTarget = HealthCalculator.dailyCalorieTarget(tdee: profile.calibratedTDEE, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
                     let dailyDeficit = HealthCalculator.plannedDeficit(tdee: profile.calibratedTDEE, calorieTarget: dailyTarget)
                     expenditureRow("静息消耗", resting)
-                    expenditureRow("日常步数", HealthCalculator.stepEnergy(restingEnergy: resting, averageSteps: profile.averageSteps))
-                    Label("实际运动会在发生当天单独增加可用额度，不计入固定基准。", systemImage: "figure.run")
+                    expenditureRow(healthKit.isEnabled ? "典型活动" : "日常步数", activity)
+                    Label(healthKit.isEnabled ? "今日实时消耗只用于反馈，完整日数据从明天校准预算。" : "实际运动会在发生当天单独增加可用额度，不计入固定基准。", systemImage: "figure.run")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                         .padding(.vertical, 3)
@@ -331,31 +360,35 @@ struct ProgressView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("记录历史").font(.title3.bold()).padding(.horizontal, 2)
             HealthCard {
-                if weights.isEmpty {
+                if measurements.isEmpty {
                     EmptyStateView(symbol: "scalemass", title: "从今天开始", message: "建议在相近时间、相近条件下称重。")
                 } else {
                     VStack(spacing: 0) {
-                        ForEach(weights.reversed()) { entry in
-                            Button { editingEntry = entry } label: {
+                        ForEach(measurements.reversed()) { measurement in
+                            Button {
+                                if let id = measurement.localEntryID { editingEntry = weights.first { $0.id == id } }
+                            } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(entry.date.formatted(.dateTime.month().day().weekday(.abbreviated)))
+                                        Text(measurement.date.formatted(.dateTime.month().day().weekday(.abbreviated)))
                                             .font(.subheadline.weight(.medium)).foregroundStyle(AppTheme.textPrimary)
-                                        Text(DateTools.isSameDay(entry.date, .now) ? "今天" : "点击可修改")
+                                        Text("\(measurement.source.rawValue) · \(measurement.localEntryID == nil ? "在健康 App 中管理" : (DateTools.isSameDay(measurement.date, .now) ? "今天" : "点击可修改"))")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text("\(unit.displayValue(fromKilograms: entry.weightKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+                                    Text("\(unit.displayValue(fromKilograms: measurement.weightKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
                                         .font(.headline.monospacedDigit()).foregroundStyle(AppTheme.textPrimary)
-                                    Button(role: .destructive) { deletingEntry = entry } label: {
-                                        Image(systemName: "trash").foregroundStyle(.tertiary)
+                                    if let id = measurement.localEntryID, let entry = weights.first(where: { $0.id == id }) {
+                                        Button(role: .destructive) { deletingEntry = entry } label: {
+                                            Image(systemName: "trash").foregroundStyle(.tertiary)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                                 .padding(.vertical, 12)
                             }
                             .buttonStyle(.plain)
-                            if entry.id != weights.first?.id { Divider() }
+                            if measurement.id != measurements.first?.id { Divider() }
                         }
                     }
                 }
@@ -364,9 +397,10 @@ struct ProgressView: View {
     }
 
     private var expenditureSource: String {
-        guard let first = weights.first, let last = weights.last else { return "来自身体信息与活动基准" }
+        if healthKit.isEnabled { return "Apple 健康完整日数据 · 次日校准" }
+        guard let first = measurements.first, let last = measurements.last else { return "来自身体信息与活动基准" }
         let days = Calendar.current.dateComponents([.day], from: first.date, to: last.date).day ?? 0
-        return weights.count >= 3 && days >= 7 ? "身体与活动估算 · 正在结合记录校准" : "来自身体信息与活动基准"
+        return measurements.count >= 3 && days >= 7 ? "身体与活动估算 · 正在结合记录校准" : "来自身体信息与活动基准"
     }
 
     private func goalProgress(_ profile: UserProfile) -> Double {
@@ -396,18 +430,57 @@ struct ProgressView: View {
             initialWeightKG: entry?.weightKG ?? latestWeight,
             previousWeightKG: previousWeight(before: entry?.date ?? .now),
             onSave: { date, kilograms in
+                let saved: WeightEntry
                 if let sameDay = weights.first(where: { DateTools.isSameDay($0.date, date) }) {
                     sameDay.weightKG = kilograms
+                    sameDay.measuredAt = Calendar.current.isDateInToday(date) ? .now : (sameDay.measuredAt ?? date)
+                    saved = sameDay
                 } else {
-                    modelContext.insert(WeightEntry(date: date, weightKG: kilograms))
+                    let entry = WeightEntry(date: date, weightKG: kilograms)
+                    modelContext.insert(entry)
+                    saved = entry
                 }
                 try? modelContext.save()
+                guard healthKit.isEnabled else { return }
+                let syncID = saved.healthSyncIdentifier ?? "tiantianhealth.weight.\(saved.id.uuidString)"
+                saved.healthSyncIdentifier = syncID
+                saved.healthSyncVersion += 1
+                saved.healthSyncStateRaw = "pending"
+                try? modelContext.save()
+                Task {
+                    do {
+                        let uuid = try await healthKit.saveWeight(
+                            kilograms,
+                            at: saved.measuredAt ?? date,
+                            syncIdentifier: syncID,
+                            version: saved.healthSyncVersion
+                        )
+                        saved.healthSampleUUID = uuid.uuidString
+                        saved.healthSyncStateRaw = "synced"
+                    } catch {
+                        saved.healthSyncStateRaw = "failed"
+                    }
+                    try? modelContext.save()
+                }
             }
         )
     }
 
     private func previousWeight(before date: Date) -> Double? {
-        weights.filter { $0.date < DateTools.day(date) }.last?.weightKG
+        measurements.filter { $0.date < DateTools.day(date) }.last?.weightKG
+    }
+
+    @MainActor
+    private func deleteWeight(_ entry: WeightEntry) async {
+        do {
+            if healthKit.isEnabled, let syncIdentifier = entry.healthSyncIdentifier {
+                try await healthKit.deleteWeight(syncIdentifier: syncIdentifier)
+            }
+            modelContext.delete(entry)
+            try modelContext.save()
+        } catch {
+            weightOperationError = "删除失败，原记录已保留。\n\(error.localizedDescription)"
+        }
     }
 
     private func handlePendingShortcut() {

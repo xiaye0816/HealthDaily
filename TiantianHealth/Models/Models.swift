@@ -166,12 +166,18 @@ final class WeightEntry {
     var date: Date
     var weightKG: Double
     var createdAt: Date
+    var measuredAt: Date?
+    var healthSyncIdentifier: String?
+    var healthSyncVersion: Int = 0
+    var healthSampleUUID: String?
+    var healthSyncStateRaw: String = "localOnly"
 
     init(date: Date, weightKG: Double) {
         id = UUID()
         self.date = Calendar.current.startOfDay(for: date)
         self.weightKG = weightKG
         createdAt = .now
+        measuredAt = Calendar.current.isDateInToday(date) ? .now : Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: date)
     }
 }
 
@@ -236,13 +242,35 @@ final class ExerciseLogEntry {
     var type: String
     var calories: Double
     var createdAt: Date
+    var isHealthSupplement: Bool = false
 
-    init(date: Date, type: String, calories: Double) {
+    init(date: Date, type: String, calories: Double, isHealthSupplement: Bool = false) {
         id = UUID()
         self.date = Calendar.current.startOfDay(for: date)
         self.type = type
         self.calories = calories
         createdAt = .now
+        self.isHealthSupplement = isHealthSupplement
+    }
+}
+
+@Model
+final class HealthIntegrationState {
+    var id: UUID
+    var isEnabled: Bool
+    var typicalRestingEnergy: Double
+    var typicalActiveEnergy: Double
+    var validDayCount: Int
+    var lastSyncedAt: Date?
+    var pendingBaselineTDEE: Double?
+    var pendingEffectiveDate: Date?
+
+    init() {
+        id = UUID()
+        isEnabled = false
+        typicalRestingEnergy = 0
+        typicalActiveEnergy = 0
+        validDayCount = 0
     }
 }
 
@@ -276,4 +304,15 @@ struct WeightPoint: Identifiable {
     let date: Date
     let rawKG: Double
     let trendKG: Double
+}
+
+struct WeightMeasurement: Identifiable, Hashable {
+    enum Source: String { case local = "天天健康", appleHealth = "Apple 健康" }
+
+    let id: UUID
+    let date: Date
+    let measuredAt: Date
+    let weightKG: Double
+    let source: Source
+    let localEntryID: UUID?
 }

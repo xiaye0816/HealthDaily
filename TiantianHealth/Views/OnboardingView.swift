@@ -8,6 +8,7 @@ private enum OnboardingPickerTarget: String, Identifiable {
 
 struct OnboardingView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var healthKit: HealthKitService
     let onComplete: () -> Void
 
     @State private var step = 0
@@ -145,6 +146,23 @@ struct OnboardingView: View {
                             activePicker = .currentWeight
                         }
                         .accessibilityIdentifier("current-weight-row")
+                        Button {
+                            Task {
+                                if await healthKit.connect(), let latest = healthKit.healthWeights.last {
+                                    currentWeightKG = latest.weightKG
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Label(healthKit.isEnabled ? "重新读取 Apple 健康体重" : "从 Apple 健康读取体重", systemImage: "heart.fill")
+                                Spacer()
+                                if healthKit.isRefreshing { ProgressView() }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(AppTheme.green)
+                        .disabled(healthKit.isRefreshing)
                     }
                 }
                 infoBanner("公式只是启动值。之后会结合你的摄入和体重记录逐步校准。")

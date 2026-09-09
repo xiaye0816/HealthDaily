@@ -131,7 +131,8 @@ struct TiantianHealthApp: App {
                 FoodPreset.self,
                 FoodLogEntry.self,
                 ExerciseLogEntry.self,
-                DailyBudget.self
+                DailyBudget.self,
+                HealthIntegrationState.self
             ])
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
             modelContainer = try ModelContainer(for: schema, configurations: [configuration])
@@ -185,7 +186,9 @@ struct RootView: View {
     @Query private var budgets: [DailyBudget]
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
+    @Query private var healthStates: [HealthIntegrationState]
     @StateObject private var router = AppRouter.shared
+    @StateObject private var healthKit = HealthKitService.shared
     @State private var isShowingSplash = true
     @State private var splashOpacity = 1.0
 
@@ -214,6 +217,7 @@ struct RootView: View {
                 }
             }
             .environmentObject(router)
+            .environmentObject(healthKit)
             .allowsHitTesting(!isShowingSplash)
 
             if isShowingSplash {
@@ -237,6 +241,7 @@ struct RootView: View {
         }
         .task(id: profiles.first?.id) {
             migrateFromFixedWorkoutBaselineIfNeeded()
+            await synchronizeHealthIfNeeded()
         }
         .task(id: widgetSnapshotSource) {
             WidgetSnapshotPublisher.publish(widgetSnapshotSource)
@@ -244,10 +249,92 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             WidgetSnapshotPublisher.publish(widgetSnapshotSource)
+            Task { await synchronizeHealthIfNeeded() }
+        }
+        .onChange(of: healthKit.isEnabled) { _, isEnabled in
+            guard isEnabled else { return }
+            Task { await synchronizeHealthIfNeeded() }
         }
         .onOpenURL { url in
             guard hasCompletedOnboarding, !profiles.isEmpty else { return }
             router.open(url: url)
+        }
+    }
+
+    @MainActor
+    private func synchronizeHealthIfNeeded() async {
+        guard let profile = profiles.first else { return }
+        let state = healthStates.first ?? {
+            let value = HealthIntegrationState()
+            modelContext.insert(value)
+            return value
+        }()
+
+        if state.isEnabled, !healthKit.isEnabled {
+            healthKit.restoreConnectionIfNeeded()
+        }
+        guard healthKit.isEnabled else { return }
+
+        await healthKit.refreshAll()
+        applyPendingHealthBaseline(state: state, profile: profile)
+
+        let latestWeight = latestAvailableWeightKG(profile: profile)
+        let fallback = HealthCalculator.baselineTDEE(profile: profile, weightKG: latestWeight)
+        guard let result = HealthCalculator.appleHealthBaseline(days: healthKit.dailyEnergy, fallbackTDEE: fallback) else {
+            state.isEnabled = true
+            state.lastSyncedAt = .now
+            try? modelContext.save()
+            return
+        }
+
+        state.isEnabled = true
+        state.typicalRestingEnergy = result.resting
+        state.typicalActiveEnergy = result.active
+        state.validDayCount = result.validDayCount
+        state.lastSyncedAt = .now
+        let learnedAdjustment = profile.calibratedTDEE - profile.baselineTDEE
+        let desired = result.total + learnedAdjustment
+        let limited = min(profile.calibratedTDEE + 100, max(profile.calibratedTDEE - 100, desired))
+        state.pendingBaselineTDEE = max(900, limited)
+        state.pendingEffectiveDate = Calendar.current.date(byAdding: .day, value: 1, to: DateTools.day(.now))
+        try? modelContext.save()
+    }
+
+    private func applyPendingHealthBaseline(state: HealthIntegrationState, profile: UserProfile) {
+        guard let pending = state.pendingBaselineTDEE,
+              let effectiveDate = state.pendingEffectiveDate,
+              DateTools.day(.now) >= DateTools.day(effectiveDate) else { return }
+        let learnedAdjustment = profile.calibratedTDEE - profile.baselineTDEE
+        profile.baselineTDEE = max(900, pending - learnedAdjustment)
+        profile.calibratedTDEE = pending
+        profile.updatedAt = .now
+
+        let latestWeight = latestAvailableWeightKG(profile: profile)
+        let target = HealthCalculator.dailyCalorieTarget(tdee: pending, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
+        let today = DateTools.day(.now)
+        for budget in budgets where budget.date >= today && !budget.isLocked {
+            budget.targetCalories = target
+        }
+        state.pendingBaselineTDEE = nil
+        state.pendingEffectiveDate = nil
+        try? modelContext.save()
+    }
+
+    private func latestAvailableWeightKG(profile: UserProfile) -> Double {
+        let latestLocal = weights.max {
+            ($0.measuredAt ?? $0.date) < ($1.measuredAt ?? $1.date)
+        }
+        let latestHealth = healthKit.healthWeights.max { $0.measuredAt < $1.measuredAt }
+
+        switch (latestLocal, latestHealth) {
+        case let (local?, health?):
+            return (local.measuredAt ?? local.date) >= health.measuredAt ? local.weightKG : health.weightKG
+        case let (local?, nil):
+            return local.weightKG
+        case let (nil, health?):
+            return health.weightKG
+        case (nil, nil):
+            return profile.initialWeightKG
         }
     }
 

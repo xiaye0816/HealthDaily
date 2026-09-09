@@ -4,6 +4,7 @@ import SwiftData
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var healthKit: HealthKitService
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
     @Query private var foodLogs: [FoodLogEntry]
@@ -60,6 +61,7 @@ struct TodayView: View {
                         weeklyReviewBanner
                     }
                     calorieHero
+                    healthEnergyCard
                     exerciseSection
                     mealSection
                     weeklySummary
@@ -86,7 +88,7 @@ struct TodayView: View {
             }
             .sheet(isPresented: $addingExercise) {
                 ExerciseEntrySheet(date: today) { type, calories in
-                    modelContext.insert(ExerciseLogEntry(date: today, type: type, calories: calories))
+                    modelContext.insert(ExerciseLogEntry(date: today, type: type, calories: calories, isHealthSupplement: healthKit.isEnabled))
                     try? modelContext.save()
                 }
                 .presentationDetents([.large])
@@ -112,6 +114,68 @@ struct TodayView: View {
             }
             .onChange(of: router.pendingQuickAction) { _, _ in handlePendingShortcut() }
             .sensoryFeedback(.selection, trigger: mealTapFeedback)
+        }
+    }
+
+    private var healthEnergyCard: some View {
+        HealthCard {
+            VStack(alignment: .leading, spacing: 13) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("今日消耗").font(.headline)
+                        Text(healthKit.isEnabled ? "来自 Apple 健康，今天仍在持续累积" : "连接 Apple 健康可查看今日实时消耗")
+                            .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                    }
+                    Spacer()
+                    Image(systemName: "heart.fill")
+                        .foregroundStyle(healthKit.isEnabled ? AppTheme.green : AppTheme.secondaryText)
+                }
+
+                if let energy = healthKit.todayEnergy, let total = energy.total {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("已记录")
+                            .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                        Spacer()
+                        Text("\(Int(total.rounded())) kcal")
+                            .font(.title2.bold().monospacedDigit())
+                            .foregroundStyle(AppTheme.deepGreen)
+                            .contentTransition(.numericText())
+                    }
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(AppTheme.divider)
+                            Capsule().fill(AppTheme.green)
+                                .frame(width: proxy.size.width * min(1, total / max(profile?.baselineTDEE ?? 1, 1)))
+                        }
+                    }
+                    .frame(height: 7)
+                    HStack {
+                        energyMetric("静息", energy.resting)
+                        Spacer()
+                        energyMetric("活动", energy.active)
+                    }
+                    Text("更新于 \(energy.updatedAt.formatted(.dateTime.hour().minute())) · 完整数据明天用于校准后续预算")
+                        .font(.caption2).foregroundStyle(AppTheme.secondaryText)
+                } else if healthKit.isEnabled {
+                    HStack(spacing: 10) {
+                        if healthKit.isRefreshing { ProgressView() }
+                        Text(healthKit.isRefreshing ? "正在读取 Apple 健康…" : "尚未读取到能量数据，请检查健康权限")
+                            .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("可在“我的 → Apple 健康”中连接。连接前继续使用身体信息与平均步数估算。")
+                        .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+        }
+    }
+
+    private func energyMetric(_ title: String, _ value: Double?) -> some View {
+        HStack(spacing: 5) {
+            Text(title).foregroundStyle(AppTheme.secondaryText)
+            Text(value.map { "\(Int($0.rounded())) kcal" } ?? "--")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
         }
     }
 
@@ -163,7 +227,7 @@ struct TodayView: View {
     private var exerciseSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("今日运动").font(.title3.bold())
+                Text(healthKit.isEnabled ? "运动补录" : "今日运动").font(.title3.bold())
                 Spacer()
                 Button { addingExercise = true } label: {
                     Label("记录", systemImage: "plus")
@@ -179,10 +243,10 @@ struct TodayView: View {
                                 .font(.title2)
                                 .foregroundStyle(AppTheme.orange)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("今天还没有运动记录")
+                                Text(healthKit.isEnabled ? "没有需要补录的运动" : "今天还没有运动记录")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(AppTheme.textPrimary)
-                                Text("运动后记下消耗，会增加今天可用额度")
+                                Text(healthKit.isEnabled ? "仅补充 Apple 健康没有记录到的运动" : "运动后记下消耗，会增加今天可用额度")
                                     .font(.caption)
                                     .foregroundStyle(AppTheme.secondaryText)
                             }
@@ -394,7 +458,7 @@ struct TodayView: View {
     }
 
     private func refreshCalibration() {
-        guard let profile else { return }
+        guard !healthKit.isEnabled, let profile else { return }
         let updated = HealthCalculator.calibratedTDEE(
             baseline: profile.baselineTDEE,
             current: profile.calibratedTDEE,
@@ -430,6 +494,7 @@ struct TodayView: View {
 
 struct ExerciseEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var healthKit: HealthKitService
     let date: Date
     let entry: ExerciseLogEntry?
     let onSave: (String, Double) -> Void
@@ -454,8 +519,10 @@ struct ExerciseEntrySheet: View {
 
     var body: some View {
         BrandModalScaffold(
-            title: entry == nil ? "记录运动" : "修改运动",
-            subtitle: "记录到 \(date.formatted(.dateTime.month().day()))，运动消耗会增加当天可用额度",
+            title: entry == nil ? (healthKit.isEnabled ? "补录运动" : "记录运动") : "修改运动",
+            subtitle: healthKit.isEnabled
+                ? "仅填写 Apple 健康未记录的运动；健康数据可能延迟几分钟"
+                : "记录到 \(date.formatted(.dateTime.month().day()))，运动消耗会增加当天可用额度",
             symbol: "figure.run"
         ) {
             dismiss()
@@ -481,7 +548,7 @@ struct ExerciseEntrySheet: View {
                 .padding(14)
                 .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 14))
             }
-            Label("保存后会立即加入该日和本周可用额度。", systemImage: "calendar.badge.checkmark")
+            Label(healthKit.isEnabled ? "补录会立即加入额度，但不会写入 Apple 健康。" : "保存后会立即加入该日和本周可用额度。", systemImage: "calendar.badge.checkmark")
                 .font(.footnote)
                 .foregroundStyle(AppTheme.deepGreen)
                 .frame(maxWidth: .infinity, alignment: .leading)

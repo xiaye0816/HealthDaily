@@ -134,6 +134,91 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: 2_310), 0.3, accuracy: 0.001)
     }
 
+    func testAppleHealthBaselineBlendsUntilSevenCompleteDays() {
+        let start = DateTools.day(.now)
+        let days = (1...3).map { offset in
+            HealthDailyEnergy(
+                date: Calendar.current.date(byAdding: .day, value: -offset, to: start)!,
+                resting: 1_700,
+                active: 500
+            )
+        }
+
+        let result = HealthCalculator.appleHealthBaseline(days: days, fallbackTDEE: 2_000)
+
+        XCTAssertEqual(result?.validDayCount, 3)
+        XCTAssertEqual(result?.confidence ?? 0, 3.0 / 7.0, accuracy: 0.001)
+        XCTAssertEqual(result?.total ?? 0, 2_000 * 4.0 / 7.0 + 2_200 * 3.0 / 7.0, accuracy: 0.001)
+    }
+
+    func testAppleHealthBaselineUsesRecentMedianAndSkipsIncompleteDays() {
+        let start = DateTools.day(.now)
+        var days = (1...7).map { offset in
+            HealthDailyEnergy(
+                date: Calendar.current.date(byAdding: .day, value: -offset, to: start)!,
+                resting: offset == 1 ? 3_000 : 1_700,
+                active: offset == 2 ? 1_500 : 500
+            )
+        }
+        days.append(HealthDailyEnergy(date: start, resting: nil, active: 300))
+        days.append(HealthDailyEnergy(date: start.addingTimeInterval(1), resting: 1_800, active: nil))
+
+        let result = HealthCalculator.appleHealthBaseline(days: days, fallbackTDEE: 1_900)
+
+        XCTAssertEqual(result?.resting ?? 0, 1_700, accuracy: 0.001)
+        XCTAssertEqual(result?.active ?? 0, 500, accuracy: 0.001)
+        XCTAssertEqual(result?.total ?? 0, 2_200, accuracy: 0.001)
+        XCTAssertEqual(result?.validDayCount, 7)
+    }
+
+    func testLatestWeightMeasurementPerDayUsesLatestTimeAndPrefersLocalForTies() {
+        let calendar = Calendar(identifier: .gregorian)
+        let day = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_000_000))
+        let healthID = UUID()
+        let localID = UUID()
+        let nextDayID = UUID()
+        let health = WeightMeasurement(
+            id: healthID,
+            date: day,
+            measuredAt: day.addingTimeInterval(7_200),
+            weightKG: 81,
+            source: .appleHealth,
+            localEntryID: nil
+        )
+        let laterLocal = WeightMeasurement(
+            id: localID,
+            date: day,
+            measuredAt: day.addingTimeInterval(10_800),
+            weightKG: 80.7,
+            source: .local,
+            localEntryID: localID
+        )
+        let nextDay = WeightMeasurement(
+            id: nextDayID,
+            date: day.addingTimeInterval(86_400),
+            measuredAt: day.addingTimeInterval(90_000),
+            weightKG: 80.5,
+            source: .appleHealth,
+            localEntryID: nil
+        )
+
+        let latest = HealthCalculator.latestWeightMeasurementsPerDay([health, nextDay, laterLocal], calendar: calendar)
+        XCTAssertEqual(latest.map(\.id), [localID, nextDayID])
+
+        let tiedLocal = WeightMeasurement(
+            id: localID,
+            date: day,
+            measuredAt: health.measuredAt,
+            weightKG: 80.9,
+            source: .local,
+            localEntryID: localID
+        )
+        XCTAssertEqual(
+            HealthCalculator.latestWeightMeasurementsPerDay([health, tiedLocal], calendar: calendar).first?.id,
+            localID
+        )
+    }
+
     func testExerciseAddsToAvailableCalories() {
         XCTAssertEqual(CalorieMath.availableCalories(base: 1_850, exercise: 320), 2_170, accuracy: 0.001)
         XCTAssertEqual(CalorieMath.availableCalories(base: 1_850, exercise: -50), 1_850, accuracy: 0.001)
