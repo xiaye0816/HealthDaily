@@ -362,9 +362,9 @@ struct ProgressView: View {
                         ? healthState!.typicalActiveEnergy
                         : HealthCalculator.stepEnergy(restingEnergy: formulaResting, averageSteps: profile.averageSteps)
                     let dailyDeficit = todayCalorieStatus?.targetDeficit
-                        ?? HealthCalculator.plannedDeficit(
-                            tdee: profile.calibratedTDEE,
-                            calorieTarget: HealthCalculator.dailyCalorieTarget(tdee: profile.calibratedTDEE, weightKG: latestWeight, pace: profile.pace, sex: profile.sex)
+                        ?? min(
+                            profile.dailyDeficitTarget(weightKG: latestWeight),
+                            max(0, profile.calibratedTDEE - HealthCalculator.minimumDailyCalories(for: profile.sex))
                         )
                     expenditureRow("静息消耗", resting)
                     expenditureRow(healthKit.isEnabled ? "典型活动" : "日常步数", activity)
@@ -375,7 +375,7 @@ struct ProgressView: View {
                     Divider().overlay(AppTheme.divider)
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
-                            Label("计划热量缺口", systemImage: "scope")
+                            Label("目标热量缺口", systemImage: "scope")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppTheme.orange)
                             Spacer()

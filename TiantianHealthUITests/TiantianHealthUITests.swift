@@ -44,7 +44,7 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["关闭"].tap()
         app.buttons["继续"].tap()
         XCTAssertTrue(app.staticTexts["你的起步目标"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["计划热量缺口"].exists)
+        XCTAssertTrue(app.staticTexts["目标热量缺口"].exists)
         XCTAssertTrue(app.staticTexts["理论脂肪量"].exists)
         capture("04-plan-preview")
         app.buttons["开始使用"].tap()
@@ -162,6 +162,19 @@ final class TiantianHealthUITests: XCTestCase {
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["我的食材库"].exists)
+
+        app.staticTexts["减脂目标"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["减脂目标"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["每日目标缺口"].exists)
+        XCTAssertTrue(app.buttons["custom-deficit-goal"].exists)
+        capture("12-deficit-goal")
+        app.buttons["custom-deficit-goal"].tap()
+        XCTAssertTrue(app.staticTexts["自定义热量缺口"].waitForExistence(timeout: 4))
+        capture("13-custom-deficit-picker")
+        app.buttons["使用这个数值"].tap()
+        XCTAssertTrue(app.staticTexts["最终采用"].waitForExistence(timeout: 4))
+        app.navigationBars["减脂目标"].buttons["我的"].tap()
+        XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 3))
 
         let converter = app.buttons["calorie-converter"]
         for _ in 0..<2 where !converter.isHittable { app.swipeUp() }

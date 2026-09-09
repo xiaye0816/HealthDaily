@@ -123,6 +123,40 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(result, 1_500)
     }
 
+    func testProfileResolvesPresetAndCustomDeficitToNumericTarget() throws {
+        let birthDate = try XCTUnwrap(Calendar.current.date(byAdding: .year, value: -30, to: .now))
+        let profile = UserProfile(
+            sex: .male,
+            birthDate: birthDate,
+            heightCM: 178,
+            weightUnit: .kg,
+            initialWeightKG: 80,
+            targetWeightKG: 76,
+            pace: .standard,
+            averageSteps: 5_000,
+            baselineTDEE: 2_200
+        )
+
+        XCTAssertEqual(
+            profile.dailyDeficitTarget(weightKG: 80),
+            HealthCalculator.presetDailyDeficit(weightKG: 80, pace: .standard),
+            accuracy: 0.001
+        )
+
+        profile.setCustomDailyDeficitTarget(537)
+        XCTAssertTrue(profile.usesCustomDailyDeficitTarget)
+        XCTAssertEqual(profile.customDailyDeficitTarget ?? 0, 525, accuracy: 0.001)
+        XCTAssertEqual(profile.dailyDeficitTarget(weightKG: 70), 525, accuracy: 0.001)
+
+        profile.pace = .fast
+        XCTAssertFalse(profile.usesCustomDailyDeficitTarget)
+        XCTAssertEqual(
+            profile.dailyDeficitTarget(weightKG: 70),
+            HealthCalculator.presetDailyDeficit(weightKG: 70, pace: .fast),
+            accuracy: 0.001
+        )
+    }
+
     func testStageGoalDefaultsToFivePercentAndLimitsRange() {
         XCTAssertEqual(HealthCalculator.healthyStageTarget(weightKG: 80), 76, accuracy: 0.001)
         XCTAssertEqual(HealthCalculator.healthyStageRange(weightKG: 80).lowerBound, 72, accuracy: 0.001)
@@ -274,6 +308,7 @@ final class HealthCalculatorTests: XCTestCase {
             averageSteps: 5_000,
             baselineTDEE: 2_200
         )
+        profile.setCustomDailyDeficitTarget(525)
         let state = HealthIntegrationState()
         state.isEnabled = true
         state.typicalRestingEnergy = 1_800
@@ -318,14 +353,17 @@ final class HealthCalculatorTests: XCTestCase {
 
         XCTAssertEqual(days.count, 3)
         XCTAssertEqual(days[0].phase, .past)
+        XCTAssertEqual(days[0].targetDeficit, 525, accuracy: 0.001)
         XCTAssertEqual(days[0].recordedExpenditure ?? 0, 2_300, accuracy: 0.001)
         XCTAssertEqual(days[0].currentDeficit ?? 0, 400, accuracy: 0.001)
         XCTAssertEqual(days[1].phase, .today)
+        XCTAssertEqual(days[1].targetDeficit, 525, accuracy: 0.001)
         XCTAssertEqual(days[1].recordedExpenditure ?? 0, 1_100, accuracy: 0.001)
         XCTAssertEqual(days[1].planningExpenditure, 2_250, accuracy: 0.001)
         XCTAssertEqual(days[1].currentDeficit ?? 0, -500, accuracy: 0.001)
         XCTAssertEqual(days[1].forecastDeficit ?? 0, days[1].targetDeficit, accuracy: 0.001)
         XCTAssertEqual(days[2].phase, .future)
+        XCTAssertEqual(days[2].targetDeficit, 525, accuracy: 0.001)
         XCTAssertNil(days[2].recordedExpenditure)
         XCTAssertEqual(days[2].source, .healthEstimated)
 

@@ -136,6 +136,10 @@ enum HealthCalculator {
         weightKG * pace.weeklyBodyWeightFraction * 7_700 / 7
     }
 
+    static func presetDailyDeficit(weightKG: Double, pace: GoalPace) -> Double {
+        max(50, (desiredDailyDeficit(weightKG: weightKG, pace: pace) / 25).rounded() * 25)
+    }
+
     static func healthyStageTarget(weightKG: Double) -> Double {
         (weightKG * 0.95 * 10).rounded() / 10
     }
@@ -274,13 +278,7 @@ enum HealthCalculator {
             historyBaseline?.resting ?? (storedResting > 0 ? storedResting : formulaResting)
         )
         let typicalActive = max(0, typicalTotal - typicalResting)
-        let referenceTarget = dailyCalorieTarget(
-            tdee: typicalTotal,
-            weightKG: latestWeightKG,
-            pace: profile.pace,
-            sex: profile.sex
-        )
-        let goalDeficit = plannedDeficit(tdee: typicalTotal, calorieTarget: referenceTarget)
+        let goalDeficit = profile.dailyDeficitTarget(weightKG: latestWeightKG)
         let minimumCalories = minimumDailyCalories(for: profile.sex)
         let historyByDay = Dictionary(grouping: historicalEnergy) { calendar.startOfDay(for: $0.date) }
 

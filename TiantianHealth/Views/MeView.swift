@@ -49,7 +49,7 @@ struct MeView: View {
                             settingsLabel("日常活动基准", symbol: "figure.walk", detail: "\(profile.averageSteps.formatted()) 步/天")
                         }
                         NavigationLink { GoalSettingsView(profile: profile) } label: {
-                            settingsLabel("减脂目标", symbol: "target", detail: profile.pace.rawValue)
+                            settingsLabel("减脂目标", symbol: "target", detail: deficitGoalDetail(for: profile))
                         }
                     }
                     Section("快捷记录") {
@@ -150,6 +150,20 @@ struct MeView: View {
             }
             Spacer(minLength: 8)
         }
+    }
+
+    private func deficitGoalDetail(for profile: UserProfile) -> String {
+        let latestLocal = weights.max { ($0.measuredAt ?? $0.date) < ($1.measuredAt ?? $1.date) }
+        let latestHealth = healthKit.healthWeights.max { $0.measuredAt < $1.measuredAt }
+        let weightKG: Double
+        if let latestHealth, latestHealth.measuredAt > (latestLocal?.measuredAt ?? latestLocal?.date ?? .distantPast) {
+            weightKG = latestHealth.weightKG
+        } else {
+            weightKG = latestLocal?.weightKG ?? profile.initialWeightKG
+        }
+        let value = Int(profile.dailyDeficitTarget(weightKG: weightKG).rounded())
+        let label = profile.usesCustomDailyDeficitTarget ? "自定义" : profile.pace.rawValue
+        return "\(label) · \(value) kcal/天"
     }
 }
 
@@ -463,23 +477,31 @@ struct ActivitySettingsView: View {
 struct GoalSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var healthKit: HealthKitService
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
 
     let profile: UserProfile
     @State private var targetKG: Double
     @State private var pace: GoalPace
+    @State private var usesCustomDailyDeficit: Bool
+    @State private var customDailyDeficit: Double
     @State private var showingTargetPicker = false
+    @State private var showingDeficitPicker = false
 
     init(profile: UserProfile) {
         self.profile = profile
         let range = HealthCalculator.healthyStageRange(weightKG: profile.initialWeightKG)
         _targetKG = State(initialValue: range.contains(profile.targetWeightKG) ? profile.targetWeightKG : HealthCalculator.healthyStageTarget(weightKG: profile.initialWeightKG))
         _pace = State(initialValue: profile.pace)
+        _usesCustomDailyDeficit = State(initialValue: profile.usesCustomDailyDeficitTarget)
+        let initialDeficit = profile.customDailyDeficitTarget
+            ?? HealthCalculator.presetDailyDeficit(weightKG: profile.initialWeightKG, pace: profile.pace)
+        _customDailyDeficit = State(initialValue: min(1_000, max(100, (initialDeficit / 25).rounded() * 25)))
     }
 
     var body: some View {
         Form {
-            Section("目标") {
+            Section("阶段目标") {
                 Button { showingTargetPicker = true } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
@@ -492,20 +514,43 @@ struct GoalSettingsView: View {
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(AppTheme.green)
                     }
                 }
-                Picker("减脂速度", selection: $pace) {
-                    ForEach(GoalPace.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Section("每日目标缺口") {
+                ForEach(GoalPace.allCases) { option in
+                    deficitPresetRow(option)
                 }
+                customDeficitRow
             }
             Section {
-                ForEach(GoalPace.allCases) { option in
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text(option.rawValue)
+                        Label("最终采用", systemImage: "scope")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.orange)
                         Spacer()
-                        Text(option.subtitle).font(.caption).foregroundStyle(.secondary)
+                        Text(usesCustomDailyDeficit ? "自定义" : pace.rawValue)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppTheme.deepGreen)
                     }
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("\(Int(resolvedDailyDeficit.rounded()))")
+                            .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(AppTheme.textPrimary)
+                        Text("kcal / 天")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    HStack {
+                        Text("每周 \(Int((resolvedDailyDeficit * 7).rounded())) kcal")
+                        Spacer()
+                        Text("理论约 \(weeklyFatEquivalent.formatted(.number.precision(.fractionLength(2)))) kg")
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(AppTheme.secondaryText)
                 }
+                .padding(.vertical, 6)
             } footer: {
-                Text("阶段目标限制在当前体重下降 1%–10% 内。减脂速度决定每日与每周的目标热量缺口。")
+                Text("三档会按当前体重换算为热量数值，也可自定义 100–1,000 kcal/天。保存后，日缺口、周缺口和预计可摄入量都按最终数值计算；最低摄入保护仍会生效。")
             }
         }
         .appScreenBackground()
@@ -528,6 +573,21 @@ struct GoalSettingsView: View {
             ) { targetKG = profile.weightUnit.kilograms(fromDisplayValue: $0) }
             .presentationDetents([.large])
         }
+        .sheet(isPresented: $showingDeficitPicker) {
+            MeasurementPickerSheet(
+                title: "自定义热量缺口",
+                subtitle: "设置每天希望达到的热量缺口",
+                symbol: "slider.horizontal.3",
+                initialValue: customDailyDeficit,
+                range: 100...1_000,
+                step: 25,
+                unit: "kcal"
+            ) { value in
+                customDailyDeficit = value
+                usesCustomDailyDeficit = true
+            }
+            .presentationDetents([.large])
+        }
         .onAppear {
             let range = HealthCalculator.healthyStageRange(weightKG: currentWeightKG)
             if !range.contains(targetKG) { targetKG = HealthCalculator.healthyStageTarget(weightKG: currentWeightKG) }
@@ -536,14 +596,99 @@ struct GoalSettingsView: View {
 
     private func save() {
         profile.targetWeightKG = targetKG
-        profile.pace = pace
-        PlanUpdater.applySettingsChange(profile: profile, weightKG: weights.first?.weightKG ?? profile.initialWeightKG)
+        if usesCustomDailyDeficit {
+            profile.setCustomDailyDeficitTarget(customDailyDeficit)
+        } else {
+            profile.pace = pace
+        }
+        PlanUpdater.applySettingsChange(profile: profile, weightKG: currentWeightKG)
         try? modelContext.save()
         dismiss()
     }
 
     private var currentWeightKG: Double {
-        weights.first?.weightKG ?? profile.initialWeightKG
+        let latestLocal = weights.max { ($0.measuredAt ?? $0.date) < ($1.measuredAt ?? $1.date) }
+        let latestHealth = healthKit.healthWeights.max { $0.measuredAt < $1.measuredAt }
+        if let latestHealth, latestHealth.measuredAt > (latestLocal?.measuredAt ?? latestLocal?.date ?? .distantPast) {
+            return latestHealth.weightKG
+        }
+        return latestLocal?.weightKG ?? profile.initialWeightKG
+    }
+
+    private var resolvedDailyDeficit: Double {
+        usesCustomDailyDeficit
+            ? customDailyDeficit
+            : HealthCalculator.presetDailyDeficit(weightKG: currentWeightKG, pace: pace)
+    }
+
+    private var weeklyFatEquivalent: Double {
+        HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: resolvedDailyDeficit * 7)
+    }
+
+    private func deficitPresetRow(_ option: GoalPace) -> some View {
+        let selected = !usesCustomDailyDeficit && pace == option
+        let value = HealthCalculator.presetDailyDeficit(weightKG: currentWeightKG, pace: option)
+        return Button {
+            withAnimation(.snappy) {
+                pace = option
+                usesCustomDailyDeficit = false
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? AppTheme.green : Color.secondary.opacity(0.35))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(option.rawValue)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text(option.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("\(Int(value.rounded())) kcal/天")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(AppTheme.deepGreen)
+                    Text("每周 \(Int((value * 7).rounded()))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("deficit-preset-\(option.rawValue)")
+    }
+
+    private var customDeficitRow: some View {
+        Button {
+            usesCustomDailyDeficit = true
+            showingDeficitPicker = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: usesCustomDailyDeficit ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(usesCustomDailyDeficit ? AppTheme.green : Color.secondary.opacity(0.35))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("自定义")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                    Text("按你的计划设置精确缺口")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer()
+                Text("\(Int(customDailyDeficit.rounded())) kcal/天")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(AppTheme.deepGreen)
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(AppTheme.green)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("custom-deficit-goal")
     }
 }
 

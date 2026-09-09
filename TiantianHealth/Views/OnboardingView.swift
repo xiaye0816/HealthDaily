@@ -33,10 +33,13 @@ struct OnboardingView: View {
     }
     private var stepEnergy: Double { HealthCalculator.stepEnergy(restingEnergy: resting, averageSteps: averageSteps) }
     private var tdee: Double { resting + stepEnergy }
-    private var targetCalories: Double {
-        HealthCalculator.dailyCalorieTarget(tdee: tdee, weightKG: currentWeightKG, pace: pace, sex: sex)
+    private var selectedDailyDeficit: Double {
+        HealthCalculator.presetDailyDeficit(weightKG: currentWeightKG, pace: pace)
     }
-    private var dailyDeficit: Double { HealthCalculator.plannedDeficit(tdee: tdee, calorieTarget: targetCalories) }
+    private var dailyDeficit: Double {
+        min(selectedDailyDeficit, max(0, tdee - HealthCalculator.minimumDailyCalories(for: sex)))
+    }
+    private var targetCalories: Double { max(0, tdee - dailyDeficit) }
     private var weeklyFatEquivalent: Double { HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: dailyDeficit * 7) }
 
     var body: some View {
@@ -225,7 +228,7 @@ struct OnboardingView: View {
                             .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
                         Divider()
                         VStack(alignment: .leading, spacing: 10) {
-                            fieldLabel("减脂速度")
+                            fieldLabel("目标缺口预设")
                             ForEach(GoalPace.allCases) { option in
                                 paceOptionRow(option)
                             }
@@ -258,7 +261,7 @@ struct OnboardingView: View {
                 }
                 HealthCard {
                     VStack(alignment: .leading, spacing: 13) {
-                        Label("计划热量缺口", systemImage: "scope")
+                        Label("目标热量缺口", systemImage: "scope")
                             .font(.headline)
                             .foregroundStyle(AppTheme.orange)
                         HStack(alignment: .firstTextBaseline) {
@@ -377,6 +380,7 @@ struct OnboardingView: View {
 
     private func paceOptionRow(_ option: GoalPace) -> some View {
         let selected = pace == option
+        let dailyDeficit = HealthCalculator.presetDailyDeficit(weightKG: currentWeightKG, pace: option)
         let weeklyLoss = currentWeightKG * option.weeklyBodyWeightFraction
         let weeklyText = weeklyLoss.formatted(.number.precision(.fractionLength(2)))
         return Button {
@@ -390,8 +394,14 @@ struct OnboardingView: View {
                     Text(option.subtitle).font(.caption).foregroundStyle(AppTheme.secondaryText)
                 }
                 Spacer()
-                Text("约 \(weeklyText) kg/周")
-                    .font(.caption.monospacedDigit()).foregroundStyle(AppTheme.secondaryText)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(Int(dailyDeficit.rounded())) kcal/天")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(AppTheme.deepGreen)
+                    Text("约 \(weeklyText) kg/周")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
             }
             .padding(12)
             .background(selected ? AppTheme.green.opacity(0.09) : Color.clear, in: RoundedRectangle(cornerRadius: 14))

@@ -77,6 +77,8 @@ enum FoodUnit: String, CaseIterable, Identifiable {
 
 @Model
 final class UserProfile {
+    private static let customDeficitPrefix = "custom-deficit:"
+
     var id: UUID
     var sexRaw: String
     var age: Int
@@ -132,6 +134,27 @@ final class UserProfile {
     var pace: GoalPace {
         get { GoalPace(rawValue: paceRaw) ?? .gentle }
         set { paceRaw = newValue.rawValue }
+    }
+
+    var customDailyDeficitTarget: Double? {
+        guard paceRaw.hasPrefix(Self.customDeficitPrefix),
+              let value = Double(paceRaw.dropFirst(Self.customDeficitPrefix.count)),
+              value.isFinite else { return nil }
+        return min(1_000, max(100, value))
+    }
+
+    var usesCustomDailyDeficitTarget: Bool {
+        customDailyDeficitTarget != nil
+    }
+
+    func dailyDeficitTarget(weightKG: Double) -> Double {
+        customDailyDeficitTarget
+            ?? HealthCalculator.presetDailyDeficit(weightKG: weightKG, pace: pace)
+    }
+
+    func setCustomDailyDeficitTarget(_ value: Double) {
+        let normalized = min(1_000, max(100, (value / 25).rounded() * 25))
+        paceRaw = Self.customDeficitPrefix + String(Int(normalized))
     }
 
     var currentAge: Int {
