@@ -64,48 +64,6 @@ struct PressableRowButtonStyle: ButtonStyle {
     }
 }
 
-struct RingProgressView: View {
-    let deficit: Double
-    let targetDeficit: Double
-    let title: String
-
-    private var progress: Double {
-        guard targetDeficit > 0 else { return 0 }
-        return min(1, max(0, deficit / targetDeficit))
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(AppTheme.green.opacity(0.12), lineWidth: 15)
-            Circle()
-                .trim(from: 0, to: min(max(progress, 0), 1))
-                .stroke(
-                    deficit >= 0
-                        ? AngularGradient(colors: [AppTheme.green, AppTheme.orange], center: .center)
-                        : AngularGradient(colors: [AppTheme.orange, AppTheme.orange], center: .center),
-                    style: StrokeStyle(lineWidth: 15, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-                .animation(.snappy(duration: 0.35), value: progress)
-            VStack(spacing: 4) {
-                Text(deficit >= 0 ? title : title.replacingOccurrences(of: "缺口", with: "盈余"))
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
-                Text("\(Int(abs(deficit).rounded()))")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .foregroundStyle(deficit >= 0 ? AppTheme.deepGreen : AppTheme.orange)
-                    .contentTransition(.numericText())
-                Text("/ 目标 \(Int(targetDeficit.rounded())) kcal")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(AppTheme.secondaryText)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(deficit >= 0 ? title : title.replacingOccurrences(of: "缺口", with: "盈余")) \(Int(abs(deficit).rounded())) 千卡，目标缺口 \(Int(targetDeficit.rounded())) 千卡")
-    }
-}
-
 extension View {
     func appScreenBackground() -> some View {
         scrollContentBackground(.hidden)

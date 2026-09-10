@@ -157,6 +157,28 @@ final class HealthCalculatorTests: XCTestCase {
         )
     }
 
+    func testDailyIntakePlanUsesHigherOfEstimatedAndActualExpenditure() {
+        let plan = HealthCalculator.dailyIntakePlan(
+            planningExpenditure: 2_200,
+            actualExpenditure: 2_450,
+            goalDeficit: 425,
+            minimumCalories: 1_500
+        )
+
+        XCTAssertEqual(plan.expenditureBasis, 2_450, accuracy: 0.001)
+        XCTAssertEqual(plan.targetDeficit, 425, accuracy: 0.001)
+        XCTAssertEqual(plan.targetIntake, 2_025, accuracy: 0.001)
+
+        let protectedPlan = HealthCalculator.dailyIntakePlan(
+            planningExpenditure: 1_200,
+            actualExpenditure: 900,
+            goalDeficit: 425,
+            minimumCalories: 1_500
+        )
+        XCTAssertEqual(protectedPlan.targetDeficit, 0, accuracy: 0.001)
+        XCTAssertEqual(protectedPlan.targetIntake, 1_500, accuracy: 0.001)
+    }
+
     func testStageGoalDefaultsToFivePercentAndLimitsRange() {
         XCTAssertEqual(HealthCalculator.healthyStageTarget(weightKG: 80), 76, accuracy: 0.001)
         XCTAssertEqual(HealthCalculator.healthyStageRange(weightKG: 80).lowerBound, 72, accuracy: 0.001)
@@ -359,6 +381,9 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(days[1].phase, .today)
         XCTAssertEqual(days[1].targetDeficit, 525, accuracy: 0.001)
         XCTAssertEqual(days[1].recordedExpenditure ?? 0, 1_100, accuracy: 0.001)
+        XCTAssertEqual(days[1].actualRestingExpenditure ?? 0, 900, accuracy: 0.001)
+        XCTAssertEqual(days[1].actualActiveExpenditure ?? 0, 200, accuracy: 0.001)
+        XCTAssertEqual(days[1].actualExpenditure ?? 0, 1_100, accuracy: 0.001)
         XCTAssertEqual(days[1].planningExpenditure, 2_250, accuracy: 0.001)
         XCTAssertEqual(days[1].currentDeficit ?? 0, -500, accuracy: 0.001)
         XCTAssertEqual(days[1].forecastDeficit ?? 0, days[1].targetDeficit, accuracy: 0.001)
@@ -486,6 +511,9 @@ final class HealthCalculatorTests: XCTestCase {
         ).first)
 
         XCTAssertEqual(day.recordedExpenditure ?? 0, 1_400, accuracy: 0.001)
+        XCTAssertEqual(day.actualRestingExpenditure ?? 0, 1_000, accuracy: 0.001)
+        XCTAssertEqual(day.actualActiveExpenditure ?? 0, 400, accuracy: 0.001)
+        XCTAssertEqual(day.actualExpenditure ?? 0, 1_400, accuracy: 0.001)
     }
 
     func testKilocalorieKilojouleRoundTrip() {

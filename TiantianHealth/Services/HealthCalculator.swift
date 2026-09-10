@@ -28,12 +28,21 @@ enum HealthCalculator {
         let source: CalorieEnergySource
         let recordedExpenditure: Double?
         let planningExpenditure: Double
+        let actualRestingExpenditure: Double?
+        let actualActiveExpenditure: Double?
         let targetDeficit: Double
         let consumed: Double
         let targetIntake: Double
         let hasIntakeData: Bool
 
         var id: Date { date }
+        var actualExpenditure: Double? {
+            guard actualRestingExpenditure != nil || actualActiveExpenditure != nil else { return nil }
+            return max(0, actualRestingExpenditure ?? 0) + max(0, actualActiveExpenditure ?? 0)
+        }
+        var intakeBasisExpenditure: Double {
+            max(planningExpenditure, actualExpenditure ?? 0)
+        }
         var currentDeficit: Double? {
             guard phase != .past || hasIntakeData else { return nil }
             return recordedExpenditure.map { $0 - consumed }
@@ -46,7 +55,7 @@ enum HealthCalculator {
                 guard hasIntakeData else { return nil }
                 return currentDeficit ?? (planningExpenditure - consumed)
             case .today:
-                let projectedIfNoMoreFood = planningExpenditure - consumed
+                let projectedIfNoMoreFood = intakeBasisExpenditure - consumed
                 return remainingIntake >= 0 ? targetDeficit : projectedIfNoMoreFood
             case .future:
                 return targetDeficit
@@ -60,6 +69,12 @@ enum HealthCalculator {
         let forecastDeficit: Double
         let consumed: Double
         let remainingIntake: Double
+    }
+
+    struct DailyIntakePlan: Equatable {
+        let expenditureBasis: Double
+        let targetDeficit: Double
+        let targetIntake: Double
     }
 
     static func age(from birthDate: Date, on referenceDate: Date = .now) -> Int {
@@ -138,6 +153,21 @@ enum HealthCalculator {
 
     static func presetDailyDeficit(weightKG: Double, pace: GoalPace) -> Double {
         max(50, (desiredDailyDeficit(weightKG: weightKG, pace: pace) / 25).rounded() * 25)
+    }
+
+    static func dailyIntakePlan(
+        planningExpenditure: Double,
+        actualExpenditure: Double?,
+        goalDeficit: Double,
+        minimumCalories: Double
+    ) -> DailyIntakePlan {
+        let basis = max(0, planningExpenditure, actualExpenditure ?? 0)
+        let effectiveDeficit = min(max(0, goalDeficit), max(0, basis - max(0, minimumCalories)))
+        return DailyIntakePlan(
+            expenditureBasis: basis,
+            targetDeficit: effectiveDeficit,
+            targetIntake: max(max(0, minimumCalories), basis - effectiveDeficit)
+        )
     }
 
     static func healthyStageTarget(weightKG: Double) -> Double {
@@ -292,12 +322,16 @@ enum HealthCalculator {
             var planningExpenditure: Double
             var source: CalorieEnergySource
             var hasHealthReading = false
+            var actualRestingExpenditure: Double?
+            var actualActiveExpenditure: Double?
 
             if healthEnabled {
                 switch phase {
                 case .past:
                     if let energy = historyByDay[date]?.last,
                        energy.resting != nil || energy.active != nil {
+                        actualRestingExpenditure = energy.resting.map { max(0, $0) }
+                        actualActiveExpenditure = energy.active.map { max(0, $0) }
                         let resting = energy.resting ?? typicalResting
                         let active = energy.active ?? typicalActive
                         planningExpenditure = max(0, resting) + max(0, active)
@@ -319,6 +353,8 @@ enum HealthCalculator {
                        todayEnergy.resting != nil || todayEnergy.active != nil,
                        let interval = calendar.dateInterval(of: .day, for: referenceDate),
                        interval.duration > 0 {
+                        actualRestingExpenditure = todayEnergy.resting.map { max(0, $0) }
+                        actualActiveExpenditure = todayEnergy.active.map { max(0, $0) }
                         let elapsed = min(1, max(0, referenceDate.timeIntervalSince(interval.start) / interval.duration))
                         let currentResting = todayEnergy.resting ?? typicalResting * elapsed
                         let currentActive = todayEnergy.active ?? typicalActive * elapsed
@@ -361,18 +397,30 @@ enum HealthCalculator {
             if let recorded = recordedExpenditure {
                 recordedExpenditure = recorded + supplementalExercise
             }
+            if supplementalExercise > 0 {
+                actualActiveExpenditure = max(0, actualActiveExpenditure ?? 0) + supplementalExercise
+            }
 
-            let effectiveTargetDeficit = min(goalDeficit, max(0, planningExpenditure - minimumCalories))
-            let targetIntake = max(minimumCalories, planningExpenditure - effectiveTargetDeficit)
+            let actualExpenditure = (actualRestingExpenditure != nil || actualActiveExpenditure != nil)
+                ? max(0, actualRestingExpenditure ?? 0) + max(0, actualActiveExpenditure ?? 0)
+                : nil
+            let intakePlan = dailyIntakePlan(
+                planningExpenditure: planningExpenditure,
+                actualExpenditure: actualExpenditure,
+                goalDeficit: goalDeficit,
+                minimumCalories: minimumCalories
+            )
             return CalorieDeficitDay(
                 date: date,
                 phase: phase,
                 source: source,
                 recordedExpenditure: recordedExpenditure,
                 planningExpenditure: planningExpenditure,
-                targetDeficit: effectiveTargetDeficit,
+                actualRestingExpenditure: actualRestingExpenditure,
+                actualActiveExpenditure: actualActiveExpenditure,
+                targetDeficit: intakePlan.targetDeficit,
                 consumed: consumed,
-                targetIntake: targetIntake,
+                targetIntake: intakePlan.targetIntake,
                 hasIntakeData: !logs.isEmpty
             )
         }

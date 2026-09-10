@@ -694,15 +694,15 @@ struct GoalSettingsView: View {
 
 struct CalorieConverterView: View {
     private enum InputUnit: String, CaseIterable, Identifiable {
-        case kilocalorie = "千卡 kcal"
         case kilojoule = "千焦 kJ"
+        case kilocalorie = "千卡 kcal"
 
         var id: String { rawValue }
         var shortName: String { self == .kilocalorie ? "kcal" : "kJ" }
         var resultName: String { self == .kilocalorie ? "kJ" : "kcal" }
     }
 
-    @State private var inputUnit: InputUnit = .kilocalorie
+    @State private var inputUnit: InputUnit = .kilojoule
     @State private var inputText = ""
     @FocusState private var isInputFocused: Bool
 

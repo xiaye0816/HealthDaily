@@ -13,8 +13,6 @@ struct TodayView: View {
 
     @State private var selectedMeal: MealType?
     @State private var editingFood: FoodLogEntry?
-    @State private var addingExercise = false
-    @State private var editingExercise: ExerciseLogEntry?
     @State private var pulseAddButton = false
     @State private var mealTapFeedback = 0
 
@@ -23,11 +21,6 @@ struct TodayView: View {
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
     private var todayLogs: [FoodLogEntry] {
         foodLogs.filter { DateTools.isSameDay($0.date, today) }
-    }
-    private var todayExerciseLogs: [ExerciseLogEntry] {
-        exerciseLogs
-            .filter { DateTools.isSameDay($0.date, today) }
-            .sorted { $0.createdAt < $1.createdAt }
     }
     private var latestWeightKG: Double {
         let latestLocal = weights.max { ($0.measuredAt ?? $0.date) < ($1.measuredAt ?? $1.date) }
@@ -60,11 +53,13 @@ struct TodayView: View {
     private var weekSummary: HealthCalculator.CalorieDeficitSummary {
         HealthCalculator.calorieDeficitSummary(days: calorieDays)
     }
-    private var displayedTodayDeficit: Double {
-        todayStatus?.currentDeficit ?? todayStatus?.forecastDeficit ?? 0
-    }
-    private var isTodayDeficitLive: Bool {
-        healthKit.isEnabled && todayStatus?.currentDeficit != nil
+    private var progressScale: Double {
+        max(
+            todayStatus?.consumed ?? 0,
+            todayStatus?.actualExpenditure ?? 0,
+            todayStatus?.planningExpenditure ?? 0,
+            1
+        )
     }
 
     var body: some View {
@@ -72,8 +67,6 @@ struct TodayView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     calorieHero
-                    healthEnergyCard
-                    exerciseSection
                     mealSection
                     weeklySummaryCard
                 }
@@ -101,27 +94,6 @@ struct TodayView: View {
                 FoodLogEntryEditorSheet(entry: entry)
                     .presentationDetents([.large])
             }
-            .sheet(isPresented: $addingExercise) {
-                ExerciseEntrySheet(date: today) { type, calories in
-                    modelContext.insert(ExerciseLogEntry(
-                        date: today,
-                        type: type,
-                        calories: calories,
-                        isHealthSupplement: healthKit.isEnabled
-                    ))
-                    try? modelContext.save()
-                }
-                .presentationDetents([.large])
-            }
-            .sheet(item: $editingExercise) { entry in
-                ExerciseEntrySheet(date: today, entry: entry) { type, calories in
-                    entry.type = type
-                    entry.calories = calories
-                    if healthKit.isEnabled { entry.isHealthSupplement = true }
-                    try? modelContext.save()
-                }
-                .presentationDetents([.large])
-            }
             .onAppear { handlePendingShortcut() }
             .onChange(of: router.pendingQuickAction) { _, _ in handlePendingShortcut() }
             .sensoryFeedback(.selection, trigger: mealTapFeedback)
@@ -130,34 +102,56 @@ struct TodayView: View {
 
     private var calorieHero: some View {
         HealthCard {
-            VStack(spacing: 18) {
-                RingProgressView(
-                    deficit: displayedTodayDeficit,
-                    targetDeficit: todayStatus?.targetDeficit ?? 0,
-                    title: isTodayDeficitLive ? "今日实时缺口" : "今日预计缺口"
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("今日热量")
+                        .font(.headline)
+                    Spacer()
+                    Label(healthKit.isEnabled ? "Apple 健康" : "备用估算", systemImage: "heart.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(healthKit.isEnabled ? AppTheme.deepGreen : AppTheme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(AppTheme.softSurface, in: Capsule())
+                }
+
+                singleEnergyBar(
+                    title: "今日已摄入",
+                    value: todayStatus?.consumed ?? 0,
+                    color: AppTheme.orange,
+                    identifier: "today-intake-progress"
                 )
-                .frame(width: 205, height: 205)
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) { todayHeroMetrics }
-                    VStack(spacing: 8) { todayHeroMetrics }
-                }
+                actualEnergyBar
 
-                VStack(spacing: 5) {
+                singleEnergyBar(
+                    title: "今日预估消耗",
+                    value: todayStatus?.planningExpenditure ?? 0,
+                    color: AppTheme.green.opacity(0.42),
+                    subtitle: "根据近期完整日和今天已有数据推算",
+                    identifier: "today-estimated-expenditure-progress"
+                )
+
+                Divider().overlay(AppTheme.divider)
+
+                HStack(alignment: .top, spacing: 14) {
+                    heroStatistic(
+                        title: "目标缺口",
+                        value: todayStatus?.targetDeficit ?? 0,
+                        color: AppTheme.textPrimary
+                    )
+                    Rectangle()
+                        .fill(AppTheme.divider)
+                        .frame(width: 1, height: 54)
                     let remaining = todayStatus?.remainingIntake ?? 0
-                    Text(remaining >= 0 ? "为保持目标，今天还可以安排" : "今天摄入比目标多了")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("\(Int(abs(remaining).rounded())) kcal")
-                        .font(.title2.bold().monospacedDigit())
-                        .foregroundStyle(remaining >= 0 ? AppTheme.deepGreen : AppTheme.orange)
-                        .contentTransition(.numericText())
-                    Text(todayGuidance)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                    heroStatistic(
+                        title: remaining >= 0 ? "预计还可摄入" : "预计超出目标",
+                        value: abs(remaining),
+                        color: remaining >= 0 ? AppTheme.deepGreen : AppTheme.orange
+                    )
                 }
+
+                healthSourceCaption
 
                 Button {
                     selectedMeal = suggestedMeal
@@ -171,176 +165,142 @@ struct TodayView: View {
         }
     }
 
-    @ViewBuilder
-    private var todayHeroMetrics: some View {
-        calorieMetric(
-            todayStatus?.recordedExpenditure == nil ? "预计消耗" : "实时消耗",
-            todayStatus?.recordedExpenditure ?? todayStatus?.planningExpenditure ?? 0,
-            accent: true
-        )
-        calorieMetric("已摄入", todayStatus?.consumed ?? 0)
-        calorieMetric("目标缺口", todayStatus?.targetDeficit ?? 0)
-    }
-
-    private var todayGuidance: String {
-        guard let status = todayStatus else { return "完成设置后开始计算热量缺口。" }
-        if status.remainingIntake < 0 {
-            return "不需要补偿式节食，本周预测会如实反映今天的选择。"
-        }
-        if isTodayDeficitLive {
-            return "可摄入量随 Apple 健康今日消耗持续更新，全天预测会逐步变准。"
-        }
-        return "当前使用健康历史或身体信息估算，连接后会随实际消耗更新。"
-    }
-
-    private var healthEnergyCard: some View {
-        HealthCard {
-            VStack(alignment: .leading, spacing: 13) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("今日消耗").font(.headline)
-                        Text(todayStatus?.source.rawValue ?? "等待数据")
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.secondaryText)
-                    }
-                    Spacer()
-                    Image(systemName: "heart.fill")
-                        .foregroundStyle(healthKit.isEnabled ? AppTheme.green : AppTheme.secondaryText)
-                }
-
-                if let status = todayStatus {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(status.recordedExpenditure == nil ? "预计全天" : "已记录")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.secondaryText)
-                        Spacer()
-                        Text("\(Int((status.recordedExpenditure ?? status.planningExpenditure).rounded())) kcal")
-                            .font(.title2.bold().monospacedDigit())
-                            .foregroundStyle(AppTheme.deepGreen)
-                            .contentTransition(.numericText())
-                    }
-                    if let recorded = status.recordedExpenditure {
-                        GeometryReader { proxy in
-                            let ratio = min(1, max(0, recorded / max(status.planningExpenditure, 1)))
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(AppTheme.divider)
-                                Capsule().fill(AppTheme.green)
-                                    .frame(width: proxy.size.width * ratio)
-                            }
-                        }
-                        .frame(height: 7)
-                    }
-                    HStack {
-                        energyMetric("预计全天", status.planningExpenditure)
-                        Spacer()
-                        energyMetric("目标缺口", status.targetDeficit)
-                    }
-                    if let energy = healthKit.todayEnergy {
-                        HStack {
-                            energyMetric("静息", energy.resting)
-                            Spacer()
-                            energyMetric("活动", energy.active)
-                        }
-                        Text("更新于 \(energy.updatedAt.formatted(.dateTime.hour().minute())) · 下拉可重新读取")
-                            .font(.caption2)
-                            .foregroundStyle(AppTheme.secondaryText)
-                    } else if healthKit.isEnabled {
-                        HStack(spacing: 9) {
-                            if healthKit.isRefreshing { SwiftUI.ProgressView() }
-                            Text(healthKit.isRefreshing ? "正在读取 Apple 健康…" : "Apple 健康暂时没有今日能量，先用近期完整日估算。")
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.secondaryText)
-                        }
-                    } else {
-                        Text("可在“我的 → Apple 健康”中连接，连接后今天和过去日期都以健康数据为准。")
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.secondaryText)
-                    }
-                }
-            }
-        }
-    }
-
-    private func energyMetric(_ title: String, _ value: Double?) -> some View {
-        HStack(spacing: 5) {
-            Text(title).foregroundStyle(AppTheme.secondaryText)
-            Text(value.map { "\(Int($0.rounded())) kcal" } ?? "--")
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-        }
-    }
-
-    private var exerciseSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(healthKit.isEnabled ? "运动补录" : "今日运动").font(.title3.bold())
+    private func singleEnergyBar(
+        title: String,
+        value: Double,
+        color: Color,
+        subtitle: String? = nil,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
                 Spacer()
-                Button { addingExercise = true } label: {
-                    Label("记录", systemImage: "plus")
-                        .font(.subheadline.bold())
-                }
-                .accessibilityIdentifier("add-exercise")
+                Text("\(Int(max(0, value).rounded())) kcal")
+                    .font(.subheadline.bold().monospacedDigit())
+                    .foregroundStyle(AppTheme.textPrimary)
+                    .contentTransition(.numericText())
             }
-            HealthCard {
-                if todayExerciseLogs.isEmpty {
-                    Button { addingExercise = true } label: {
-                        HStack(spacing: 13) {
-                            Image(systemName: "figure.run.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(AppTheme.orange)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(healthKit.isEnabled ? "没有需要补录的运动" : "今天还没有运动记录")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                Text(healthKit.isEnabled ? "仅补充 Apple 健康没有记录到的消耗" : "运动消耗会计入今天的热量缺口")
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.secondaryText)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PressableRowButtonStyle())
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(todayExerciseLogs) { entry in
-                            HStack(spacing: 12) {
-                                Button { editingExercise = entry } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(entry.type)
-                                                .font(.subheadline.weight(.semibold))
-                                                .foregroundStyle(AppTheme.textPrimary)
-                                                .lineLimit(1)
-                                            Text(entry.isHealthSupplement ? "健康数据补录 · 点击可修改" : "点击可修改")
-                                                .font(.caption2)
-                                                .foregroundStyle(AppTheme.secondaryText)
-                                        }
-                                        Spacer()
-                                        Text("+\(Int(entry.calories.rounded())) kcal")
-                                            .font(.subheadline.bold().monospacedDigit())
-                                            .foregroundStyle(AppTheme.deepGreen)
-                                    }
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                Button(role: .destructive) {
-                                    withAnimation { modelContext.delete(entry) }
-                                    try? modelContext.save()
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("删除 \(entry.type)")
-                            }
-                            .padding(.vertical, 10)
-                            if entry.id != todayExerciseLogs.last?.id { Divider() }
-                        }
-                    }
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AppTheme.divider)
+                    Capsule()
+                        .fill(color)
+                        .frame(width: proxy.size.width * energyRatio(value))
                 }
+            }
+            .frame(height: 10)
+            .animation(.snappy(duration: 0.3), value: value)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title) \(Int(max(0, value).rounded())) 千卡")
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var actualEnergyBar: some View {
+        let resting = max(0, todayStatus?.actualRestingExpenditure ?? 0)
+        let active = max(0, todayStatus?.actualActiveExpenditure ?? 0)
+        let actual = todayStatus?.actualExpenditure
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("今日实际消耗")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(actual.map { "\(Int($0.rounded())) kcal" } ?? "等待数据")
+                    .font(.subheadline.bold().monospacedDigit())
+                    .foregroundStyle(actual == nil ? AppTheme.secondaryText : AppTheme.textPrimary)
+                    .contentTransition(.numericText())
+            }
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AppTheme.divider)
+                    HStack(spacing: 0) {
+                        AppTheme.deepGreen
+                            .frame(width: proxy.size.width * energyRatio(resting))
+                        AppTheme.green
+                            .frame(width: proxy.size.width * energyRatio(active))
+                        Spacer(minLength: 0)
+                    }
+                    .clipShape(Capsule())
+                }
+            }
+            .frame(height: 10)
+            .animation(.snappy(duration: 0.3), value: actual)
+            HStack(spacing: 14) {
+                energyLegend("静息", value: resting, color: AppTheme.deepGreen)
+                energyLegend("活动", value: active, color: AppTheme.green)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(actual.map {
+            "今日实际消耗 \(Int($0.rounded())) 千卡，静息 \(Int(resting.rounded())) 千卡，活动 \(Int(active.rounded())) 千卡"
+        } ?? "今日实际消耗等待 Apple 健康数据")
+        .accessibilityIdentifier("today-actual-expenditure-progress")
+    }
+
+    private func energyLegend(_ title: String, value: Double, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text("\(title) \(Int(value.rounded()))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+    }
+
+    private func heroStatistic(title: String, value: Double, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            Text("\(Int(max(0, value).rounded())) kcal")
+                .font(.title3.bold().monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var healthSourceCaption: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if healthKit.isRefreshing {
+                SwiftUI.ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: healthKit.isEnabled ? "arrow.triangle.2.circlepath" : "info.circle")
+                    .foregroundStyle(healthKit.isEnabled ? AppTheme.green : AppTheme.secondaryText)
+            }
+            Text(healthSourceText)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var healthSourceText: String {
+        if healthKit.isRefreshing {
+            return "正在更新 Apple 健康数据…"
+        }
+        if let updatedAt = healthKit.todayEnergy?.updatedAt {
+            return "实际消耗更新于 \(updatedAt.formatted(.dateTime.hour().minute()))；下拉可重新读取。"
+        }
+        if healthKit.isEnabled {
+            return "Apple 健康暂时没有今日能量，当前先按近期完整日估算。"
+        }
+        return "连接 Apple 健康后可显示实时消耗；当前使用身体信息备用估算。"
+    }
+
+    private func energyRatio(_ value: Double) -> Double {
+        min(1, max(0, value / progressScale))
     }
 
     private var mealSection: some View {
@@ -481,20 +441,6 @@ struct TodayView: View {
         }
     }
 
-    private func calorieMetric(_ title: String, _ value: Double, accent: Bool = false) -> some View {
-        VStack(spacing: 3) {
-            Text(title).font(.caption2).foregroundStyle(AppTheme.secondaryText)
-            Text("\(Int(value.rounded()))")
-                .font(.subheadline.bold().monospacedDigit())
-                .foregroundStyle(accent ? AppTheme.deepGreen : AppTheme.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 9)
-        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
-    }
-
     private func handlePendingShortcut() {
         guard let pending = router.pendingQuickAction,
               case let .meal(meal) = pending.destination else { return }
@@ -530,7 +476,7 @@ struct ExerciseEntrySheet: View {
 
     var body: some View {
         BrandModalScaffold(
-            title: entry == nil ? (healthKit.isEnabled ? "补录运动" : "记录运动") : "修改运动",
+            title: entry == nil ? "补录运动" : "修改运动",
             subtitle: healthKit.isEnabled
                 ? "仅填写 Apple 健康未记录的运动；健康数据可能延迟几分钟"
                 : "记录到 \(date.formatted(.dateTime.month().day()))，消耗会计入当天热量缺口",

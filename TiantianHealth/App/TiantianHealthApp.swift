@@ -246,12 +246,12 @@ struct RootView: View {
         .preferredColorScheme(.light)
         .task {
             guard isShowingSplash else { return }
-            try? await Task.sleep(for: .milliseconds(900))
+            try? await Task.sleep(for: .milliseconds(450))
             guard !Task.isCancelled else { return }
-            withAnimation(.linear(duration: 0.1)) {
+            withAnimation(.linear(duration: 0.05)) {
                 splashOpacity = 0
             }
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
             isShowingSplash = false
         }
