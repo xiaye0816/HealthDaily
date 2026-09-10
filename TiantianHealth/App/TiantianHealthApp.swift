@@ -69,8 +69,21 @@ final class AppRouter: ObservableObject {
         case "budget":
             selectedTab = .budget
             return true
+        case "food":
+            selectedTab = .today
+            pendingQuickAction = PendingQuickAction(destination: .meal(Self.suggestedMeal()))
+            return true
         default:
             return false
+        }
+    }
+
+    private static func suggestedMeal(at date: Date = .now) -> MealType {
+        switch Calendar.current.component(.hour, from: date) {
+        case 5..<11: .breakfast
+        case 11..<16: .lunch
+        case 16..<22: .dinner
+        default: .snack
         }
     }
 }

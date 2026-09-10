@@ -76,12 +76,18 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["新建食物"].waitForExistence(timeout: 4))
         capture("06-food-editor")
 
+        let creationMethod = app.segmentedControls["food-creation-method"]
+        XCTAssertTrue(creationMethod.waitForExistence(timeout: 3))
+        creationMethod.buttons["包装营养表"].tap()
+        app.textFields["food-kilojoules-per-100g"].tap()
+        app.textFields["food-kilojoules-per-100g"].typeText("1680")
+        app.textFields["food-net-weight-grams"].tap()
+        app.textFields["food-net-weight-grams"].typeText("50")
+        XCTAssertTrue(app.staticTexts["每份约 201 kcal"].waitForExistence(timeout: 3))
+        capture("06a-nutrition-label-food")
         let nameField = app.textFields["名称，例如：煎鸡胸"]
         nameField.tap()
         nameField.typeText("煎鸡胸")
-        let caloriesField = app.textFields["food-calories"]
-        caloriesField.tap()
-        caloriesField.typeText("250")
         app.buttons["保存并选中"].tap()
 
         let addToMeal = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "加入")).firstMatch

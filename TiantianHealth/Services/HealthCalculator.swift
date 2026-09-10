@@ -603,6 +603,11 @@ enum CalorieMath {
         value / kilojoulesPerKilocalorie
     }
 
+    static func packageKilocalories(kilojoulesPer100Grams: Double, netWeightGrams: Double) -> Double {
+        guard kilojoulesPer100Grams > 0, netWeightGrams > 0 else { return 0 }
+        return kilocalories(fromKilojoules: kilojoulesPer100Grams * netWeightGrams / 100)
+    }
+
     static func availableCalories(base: Double, exercise: Double) -> Double {
         base + max(0, exercise)
     }

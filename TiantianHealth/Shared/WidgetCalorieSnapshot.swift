@@ -14,6 +14,9 @@ struct WidgetCalorieDay: Codable, Hashable {
     let targetDeficit: Double?
     let currentDeficit: Double?
     let forecastDeficit: Double?
+    let actualRestingExpenditure: Double?
+    let actualActiveExpenditure: Double?
+    let estimatedExpenditure: Double?
 
     init(
         date: Date,
@@ -22,7 +25,10 @@ struct WidgetCalorieDay: Codable, Hashable {
         consumed: Double,
         targetDeficit: Double? = nil,
         currentDeficit: Double? = nil,
-        forecastDeficit: Double? = nil
+        forecastDeficit: Double? = nil,
+        actualRestingExpenditure: Double? = nil,
+        actualActiveExpenditure: Double? = nil,
+        estimatedExpenditure: Double? = nil
     ) {
         self.date = date
         self.baseBudget = baseBudget
@@ -31,6 +37,9 @@ struct WidgetCalorieDay: Codable, Hashable {
         self.targetDeficit = targetDeficit
         self.currentDeficit = currentDeficit
         self.forecastDeficit = forecastDeficit
+        self.actualRestingExpenditure = actualRestingExpenditure
+        self.actualActiveExpenditure = actualActiveExpenditure
+        self.estimatedExpenditure = estimatedExpenditure
     }
 }
 
@@ -58,6 +67,9 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
             let currentValues = entries.compactMap(\.currentDeficit)
             let forecastValues = entries.compactMap(\.forecastDeficit)
             let targetValues = entries.compactMap(\.targetDeficit)
+            let restingValues = entries.compactMap(\.actualRestingExpenditure)
+            let activeValues = entries.compactMap(\.actualActiveExpenditure)
+            let estimatedValues = entries.compactMap(\.estimatedExpenditure)
             return WidgetCalorieDay(
                 date: date,
                 baseBudget: entries.first?.baseBudget ?? fallbackDailyBudget,
@@ -65,7 +77,10 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
                 consumed: entries.reduce(0) { $0 + max(0, $1.consumed) },
                 targetDeficit: targetValues.isEmpty ? nil : targetValues.reduce(0, +),
                 currentDeficit: currentValues.isEmpty ? nil : currentValues.reduce(0, +),
-                forecastDeficit: forecastValues.isEmpty ? nil : forecastValues.reduce(0, +)
+                forecastDeficit: forecastValues.isEmpty ? nil : forecastValues.reduce(0, +),
+                actualRestingExpenditure: restingValues.isEmpty ? nil : restingValues.reduce(0, +),
+                actualActiveExpenditure: activeValues.isEmpty ? nil : activeValues.reduce(0, +),
+                estimatedExpenditure: estimatedValues.isEmpty ? nil : estimatedValues.reduce(0, +)
             )
         }
 
@@ -78,6 +93,10 @@ struct WidgetCalorieSnapshot: Codable, Hashable {
             todayCurrentDeficit: todayValues.currentDeficit ?? 0,
             todayHasCurrentDeficit: todayValues.currentDeficit != nil,
             todayForecastDeficit: todayValues.forecastDeficit ?? todayValues.targetDeficit ?? 0,
+            todayActualRestingExpenditure: todayValues.actualRestingExpenditure,
+            todayActualActiveExpenditure: todayValues.actualActiveExpenditure,
+            todayEstimatedExpenditure: todayValues.estimatedExpenditure
+                ?? max(0, todayValues.baseBudget + (todayValues.targetDeficit ?? 0)),
             weekTargetIntake: weekValues.reduce(0) { $0 + max(0, $1.baseBudget) },
             weekConsumed: weekValues.reduce(0) { $0 + max(0, $1.consumed) },
             weekTargetDeficit: weekValues.reduce(0) { $0 + max(0, $1.targetDeficit ?? 0) },
@@ -108,6 +127,9 @@ struct WidgetCalorieMetrics: Hashable {
     let todayCurrentDeficit: Double
     let todayHasCurrentDeficit: Bool
     let todayForecastDeficit: Double
+    let todayActualRestingExpenditure: Double?
+    let todayActualActiveExpenditure: Double?
+    let todayEstimatedExpenditure: Double
     let weekTargetIntake: Double
     let weekConsumed: Double
     let weekTargetDeficit: Double
@@ -117,6 +139,30 @@ struct WidgetCalorieMetrics: Hashable {
 
     var todayRemainingIntake: Double { todayTargetIntake - todayConsumed }
     var weekRemainingIntake: Double { weekTargetIntake - weekConsumed }
+
+    var todayActualExpenditure: Double? {
+        guard todayActualRestingExpenditure != nil || todayActualActiveExpenditure != nil else { return nil }
+        return max(0, todayActualRestingExpenditure ?? 0) + max(0, todayActualActiveExpenditure ?? 0)
+    }
+
+    var todayProgressScale: Double {
+        max(1, todayConsumed, todayActualExpenditure ?? 0, todayEstimatedExpenditure)
+    }
+
+    var todayIntakeLimit: Double {
+        max(0, max(todayEstimatedExpenditure, todayActualExpenditure ?? 0) - todayTargetDeficit)
+    }
+
+    var todayEstimatedRemainingIntake: Double { todayIntakeLimit - todayConsumed }
+
+    var todaySafeConsumed: Double { min(todayConsumed, todayIntakeLimit) }
+    var todayExceededIntakeLimit: Double { max(0, todayConsumed - todayIntakeLimit) }
+    var todayUnconsumedReservedDeficit: Double {
+        max(0, todayTargetDeficit - min(todayExceededIntakeLimit, todayTargetDeficit))
+    }
+    var todayReservedDeficitStart: Double {
+        max(todayIntakeLimit, todaySafeConsumed + todayExceededIntakeLimit)
+    }
 }
 
 struct WidgetSnapshotStore {

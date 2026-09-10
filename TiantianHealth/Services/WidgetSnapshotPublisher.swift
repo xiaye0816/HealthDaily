@@ -9,6 +9,9 @@ struct WidgetSnapshotSource: Hashable {
         let targetDeficit: Double
         let currentDeficit: Double?
         let forecastDeficit: Double?
+        let actualRestingExpenditure: Double?
+        let actualActiveExpenditure: Double?
+        let estimatedExpenditure: Double
     }
 
     let isOnboarded: Bool
@@ -31,7 +34,10 @@ struct WidgetSnapshotSource: Hashable {
                 consumed: day.consumed,
                 targetDeficit: day.targetDeficit,
                 currentDeficit: day.currentDeficit,
-                forecastDeficit: day.forecastDeficit
+                forecastDeficit: day.forecastDeficit,
+                actualRestingExpenditure: day.actualRestingExpenditure,
+                actualActiveExpenditure: day.actualActiveExpenditure,
+                estimatedExpenditure: day.planningExpenditure
             )
         }
     }
@@ -51,7 +57,10 @@ struct WidgetSnapshotSource: Hashable {
                     consumed: $0.consumed,
                     targetDeficit: $0.targetDeficit,
                     currentDeficit: $0.currentDeficit,
-                    forecastDeficit: $0.forecastDeficit
+                    forecastDeficit: $0.forecastDeficit,
+                    actualRestingExpenditure: $0.actualRestingExpenditure,
+                    actualActiveExpenditure: $0.actualActiveExpenditure,
+                    estimatedExpenditure: $0.estimatedExpenditure
                 )
             }
         )

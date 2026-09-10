@@ -559,6 +559,24 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(CalorieMath.kilocalories(fromKilojoules: kilojoules), 250, accuracy: 0.001)
     }
 
+    func testNutritionLabelPackageKilocalories() {
+        let calories = CalorieMath.packageKilocalories(
+            kilojoulesPer100Grams: 1_680,
+            netWeightGrams: 50
+        )
+
+        XCTAssertEqual(calories, 840 / 4.184, accuracy: 0.001)
+        XCTAssertEqual(calories.rounded(), 201)
+        XCTAssertEqual(
+            CalorieMath.packageKilocalories(kilojoulesPer100Grams: 0, netWeightGrams: 50),
+            0
+        )
+        XCTAssertEqual(
+            CalorieMath.packageKilocalories(kilojoulesPer100Grams: 1_680, netWeightGrams: -1),
+            0
+        )
+    }
+
     func testFoodPresetsSortByActualRecentUseThenCreationTime() {
         let now = Date.now
         let olderUsed = FoodPreset(name: "鸡蛋", baseQuantity: 1, unit: .item, calories: 75)
@@ -633,6 +651,83 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(metrics.todayForecastDeficit, -200, accuracy: 0.001)
     }
 
+    func testWidgetMetricsExposeTodayEnergyBarsAndReservedDeficit() {
+        let now = Date.now
+        let snapshot = WidgetCalorieSnapshot(
+            generatedAt: now,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_925,
+            days: [WidgetCalorieDay(
+                date: now,
+                baseBudget: 1_925,
+                exercise: 0,
+                consumed: 1_530,
+                targetDeficit: 425,
+                currentDeficit: 626,
+                forecastDeficit: 809,
+                actualRestingExpenditure: 1_785,
+                actualActiveExpenditure: 371,
+                estimatedExpenditure: 2_356
+            )]
+        )
+
+        let metrics = snapshot.metrics(on: now)
+        XCTAssertEqual(metrics.todayActualExpenditure ?? 0, 2_156, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayEstimatedExpenditure, 2_356, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayIntakeLimit, 1_931, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayEstimatedRemainingIntake, 401, accuracy: 0.001)
+        XCTAssertEqual(metrics.todaySafeConsumed, 1_530, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayExceededIntakeLimit, 0, accuracy: 0.001)
+        XCTAssertEqual(metrics.todayUnconsumedReservedDeficit, 425, accuracy: 0.001)
+
+        let overTarget = WidgetCalorieSnapshot(
+            generatedAt: now,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_925,
+            days: [WidgetCalorieDay(
+                date: now,
+                baseBudget: 1_925,
+                exercise: 0,
+                consumed: 2_100,
+                targetDeficit: 425,
+                actualRestingExpenditure: 1_785,
+                actualActiveExpenditure: 371,
+                estimatedExpenditure: 2_356
+            )]
+        ).metrics(on: now)
+
+        XCTAssertEqual(overTarget.todaySafeConsumed, 1_931, accuracy: 0.001)
+        XCTAssertEqual(overTarget.todayExceededIntakeLimit, 169, accuracy: 0.001)
+        XCTAssertEqual(overTarget.todayUnconsumedReservedDeficit, 256, accuracy: 0.001)
+    }
+
+    func testWidgetSnapshotDecodesPayloadFromPreviousVersion() throws {
+        let now = Date.now
+        let dateValue = Int(now.timeIntervalSince1970 * 1_000)
+        let oldPayload: [String: Any] = [
+            "generatedAt": dateValue,
+            "isOnboarded": true,
+            "fallbackDailyBudget": 1_800,
+            "days": [[
+                "date": dateValue,
+                "baseBudget": 1_800,
+                "exercise": 0,
+                "consumed": 1_200,
+                "targetDeficit": 400,
+                "forecastDeficit": 400
+            ]]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: oldPayload)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let decoded = try decoder.decode(WidgetCalorieSnapshot.self, from: data)
+
+        XCTAssertNil(decoded.days.first?.actualRestingExpenditure)
+        XCTAssertNil(decoded.days.first?.actualActiveExpenditure)
+        XCTAssertNil(decoded.days.first?.estimatedExpenditure)
+        XCTAssertEqual(decoded.metrics(on: now).todayEstimatedExpenditure, 2_200, accuracy: 0.001)
+    }
+
     func testWidgetSnapshotStoreDoesNotRewriteUnchangedContentAndCanClear() {
         let suiteName = "WidgetSnapshotStoreTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -687,6 +782,14 @@ final class HealthCalculatorTests: XCTestCase {
         let router = AppRouter.shared
         XCTAssertTrue(router.open(url: URL(string: "tiantianhealth://today")!))
         XCTAssertEqual(router.selectedTab, .today)
+        router.clearPendingShortcut()
+        XCTAssertTrue(router.open(url: URL(string: "tiantianhealth://food")!))
+        XCTAssertEqual(router.selectedTab, .today)
+        if case .meal = router.pendingQuickAction?.destination {
+            // The suggested meal is intentionally time-dependent.
+        } else {
+            XCTFail("Food widget deep link should enqueue a meal entry route")
+        }
         XCTAssertTrue(router.open(url: URL(string: "tiantianhealth://budget")!))
         XCTAssertEqual(router.selectedTab, .budget)
         XCTAssertFalse(router.open(url: URL(string: "https://example.com/budget")!))

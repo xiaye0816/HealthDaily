@@ -417,6 +417,13 @@ enum FoodEditorMode {
     case edit(FoodPreset)
 }
 
+private enum FoodCreationMethod: String, CaseIterable, Identifiable {
+    case direct = "直接输入"
+    case nutritionLabel = "包装营养表"
+
+    var id: String { rawValue }
+}
+
 struct FoodPresetEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -426,6 +433,9 @@ struct FoodPresetEditorView: View {
     @State private var name: String
     @State private var unit: FoodUnit
     @State private var caloriesText: String
+    @State private var creationMethod: FoodCreationMethod = .direct
+    @State private var kilojoulesPer100GramsText = ""
+    @State private var netWeightGramsText = ""
 
     init(mode: FoodEditorMode, onSaved: ((FoodPreset, Int) -> Void)? = nil) {
         self.mode = mode
@@ -441,53 +451,77 @@ struct FoodPresetEditorView: View {
         }
     }
 
+    private var directCalories: Double { decimalValue(caloriesText) }
+    private var kilojoulesPer100Grams: Double { decimalValue(kilojoulesPer100GramsText) }
+    private var netWeightGrams: Double { decimalValue(netWeightGramsText) }
+    private var packageCalories: Double {
+        CalorieMath.packageKilocalories(
+            kilojoulesPer100Grams: kilojoulesPer100Grams,
+            netWeightGrams: netWeightGrams
+        ).rounded()
+    }
     private var calories: Double {
-        Double(caloriesText.replacingOccurrences(of: ",", with: ".")) ?? 0
+        creationMethod == .nutritionLabel ? packageCalories : directCalories
     }
 
     var body: some View {
         BrandModalScaffold(title: title, subtitle: "保存后，下次可以直接选择并调整数量", symbol: "fork.knife") {
             dismiss()
         } content: {
+            if !isEditing {
+                BrandSection("录入方式") {
+                    Picker("录入方式", selection: $creationMethod) {
+                        ForEach(FoodCreationMethod.allCases) { method in
+                            Text(method.rawValue).tag(method)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("food-creation-method")
+                }
+            }
             BrandSection("食物名称") {
                 TextField("名称，例如：煎鸡胸", text: $name)
                     .padding(14)
                     .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
             }
-            BrandSection("单位") {
-                VStack(spacing: 12) {
-                    Text("默认按 1 \(unit.rawValue) 保存，实际记录时再调整数量。")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 8) {
-                        ForEach(FoodUnit.allCases) { option in
-                            Button {
-                                withAnimation(.snappy) { unit = option }
-                            } label: {
-                                Text(option.rawValue)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(unit == option ? Color.white : AppTheme.textPrimary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                                    .background(unit == option ? AppTheme.green : AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 11))
+            if creationMethod == .direct {
+                BrandSection("单位") {
+                    VStack(spacing: 12) {
+                        Text("默认按 1 \(unit.rawValue) 保存，实际记录时再调整数量。")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 8) {
+                            ForEach(FoodUnit.allCases) { option in
+                                Button {
+                                    withAnimation(.snappy) { unit = option }
+                                } label: {
+                                    Text(option.rawValue)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(unit == option ? Color.white : AppTheme.textPrimary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .background(unit == option ? AppTheme.green : AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 11))
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
-            }
-            BrandSection(calorieSectionTitle) {
-                HStack {
-                    Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
-                    TextField("热量", text: $caloriesText)
-                        .keyboardType(.decimalPad)
-                        .font(.title2.bold().monospacedDigit())
-                        .accessibilityIdentifier("food-calories")
-                    Text("kcal").foregroundStyle(AppTheme.secondaryText)
+                BrandSection(calorieSectionTitle) {
+                    HStack {
+                        Image(systemName: "flame.fill").foregroundStyle(AppTheme.orange)
+                        TextField("热量", text: $caloriesText)
+                            .keyboardType(.decimalPad)
+                            .font(.title2.bold().monospacedDigit())
+                            .accessibilityIdentifier("food-calories")
+                        Text("kcal").foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .padding(14)
+                    .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 13))
                 }
-                .padding(14)
-                .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 13))
+            } else {
+                nutritionLabelFields
             }
             if let legacyBasisDescription {
                 Label(legacyBasisDescription, systemImage: "clock.arrow.circlepath")
@@ -512,6 +546,11 @@ struct FoodPresetEditorView: View {
 
     private var modeIsAdding: Bool {
         if case .createAndAdd = mode { return true }
+        return false
+    }
+
+    private var isEditing: Bool {
+        if case .edit = mode { return true }
         return false
     }
 
@@ -540,12 +579,74 @@ struct FoodPresetEditorView: View {
             existing.calories = calories
             preset = existing
         } else {
-            preset = FoodPreset(name: name.trimmingCharacters(in: .whitespaces), baseQuantity: 1, unit: unit, calories: calories)
+            preset = FoodPreset(
+                name: name.trimmingCharacters(in: .whitespaces),
+                baseQuantity: 1,
+                unit: creationMethod == .nutritionLabel ? .serving : unit,
+                calories: calories
+            )
             modelContext.insert(preset)
         }
         try? modelContext.save()
         onSaved?(preset, 1)
         dismiss()
+    }
+
+    private var nutritionLabelFields: some View {
+        VStack(spacing: 14) {
+            BrandSection("包装上的能量") {
+                HStack {
+                    Image(systemName: "bolt.fill").foregroundStyle(AppTheme.orange)
+                    TextField("例如：1680", text: $kilojoulesPer100GramsText)
+                        .keyboardType(.decimalPad)
+                        .font(.title3.bold().monospacedDigit())
+                        .accessibilityIdentifier("food-kilojoules-per-100g")
+                    Text("kJ / 100g").foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.warmSurface, in: RoundedRectangle(cornerRadius: 13))
+            }
+            BrandSection("包装净含量") {
+                HStack {
+                    Image(systemName: "scalemass.fill").foregroundStyle(AppTheme.green)
+                    TextField("例如：50", text: $netWeightGramsText)
+                        .keyboardType(.decimalPad)
+                        .font(.title3.bold().monospacedDigit())
+                        .accessibilityIdentifier("food-net-weight-grams")
+                    Text("g").foregroundStyle(AppTheme.secondaryText)
+                }
+                .padding(14)
+                .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 13))
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("换算结果")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.secondaryText)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(packageCalories > 0 ? "每份约 \(Int(packageCalories)) kcal" : "等待填写包装数据")
+                        .font(.title3.bold().monospacedDigit())
+                        .foregroundStyle(packageCalories > 0 ? AppTheme.deepGreen : AppTheme.secondaryText)
+                    Spacer(minLength: 8)
+                }
+                if packageCalories > 0 {
+                    Text("\(kilojoulesPer100Grams.cleanString) kJ × \(netWeightGrams.cleanString) g ÷ 100 ÷ 4.184")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Text("按整个包装保存为 1 份，记录时再调整份数。")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("food-package-result")
+        }
+    }
+
+    private func decimalValue(_ text: String) -> Double {
+        Double(text.replacingOccurrences(of: ",", with: ".")) ?? 0
     }
 }
 
