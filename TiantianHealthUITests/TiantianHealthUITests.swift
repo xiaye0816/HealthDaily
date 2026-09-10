@@ -103,6 +103,7 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["目标偏离"].exists)
         XCTAssertFalse(app.staticTexts["本周预测缺口"].exists)
         XCTAssertTrue(app.staticTexts["每天的缺口"].exists)
+        XCTAssertTrue(app.staticTexts["今日缺口"].exists)
         XCTAssertTrue(app.staticTexts["点按查看与补记"].exists)
         XCTAssertTrue(["周一", "周二", "周三", "周四", "周五", "周六", "周日"].contains { app.staticTexts[$0].exists })
         capture("07-read-only-budget")

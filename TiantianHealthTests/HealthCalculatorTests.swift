@@ -278,6 +278,38 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(summary.completedPastDayCount, 0)
     }
 
+    func testRealizedDeficitUsesOnlyActualExpenditureAndIgnoresTarget() {
+        let today = DateTools.day(.now)
+        func day(
+            phase: HealthCalculator.CalorieDayPhase,
+            recordedExpenditure: Double?,
+            consumed: Double,
+            targetDeficit: Double = 400,
+            hasIntakeData: Bool = true
+        ) -> HealthCalculator.CalorieDeficitDay {
+            HealthCalculator.CalorieDeficitDay(
+                date: today,
+                phase: phase,
+                source: recordedExpenditure == nil ? .healthEstimated : .healthActual,
+                recordedExpenditure: recordedExpenditure,
+                planningExpenditure: 2_400,
+                actualRestingExpenditure: recordedExpenditure.map { $0 * 0.8 },
+                actualActiveExpenditure: recordedExpenditure.map { $0 * 0.2 },
+                targetDeficit: targetDeficit,
+                consumed: consumed,
+                targetIntake: 2_000,
+                hasIntakeData: hasIntakeData
+            )
+        }
+
+        XCTAssertEqual(day(phase: .today, recordedExpenditure: 1_500, consumed: 1_100).realizedDeficit, 400, accuracy: 0.001)
+        XCTAssertEqual(day(phase: .today, recordedExpenditure: 1_500, consumed: 1_800).realizedDeficit, -300, accuracy: 0.001)
+        XCTAssertEqual(day(phase: .today, recordedExpenditure: 1_500, consumed: 1_100, targetDeficit: 800).realizedDeficit, 400, accuracy: 0.001)
+        XCTAssertEqual(day(phase: .future, recordedExpenditure: 2_400, consumed: 500).realizedDeficit, 0, accuracy: 0.001)
+        XCTAssertEqual(day(phase: .past, recordedExpenditure: 2_400, consumed: 0, hasIntakeData: false).realizedDeficit, 2_400, accuracy: 0.001)
+        XCTAssertEqual(day(phase: .past, recordedExpenditure: nil, consumed: 1_600).realizedDeficit, 0, accuracy: 0.001)
+    }
+
     func testStageGoalDefaultsToFivePercentAndLimitsRange() {
         XCTAssertEqual(HealthCalculator.healthyStageTarget(weightKG: 80), 76, accuracy: 0.001)
         XCTAssertEqual(HealthCalculator.healthyStageRange(weightKG: 80).lowerBound, 72, accuracy: 0.001)

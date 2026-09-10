@@ -182,11 +182,12 @@ struct BudgetView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
                 compactMetric(day.recordedExpenditure == nil ? "预计消耗" : "实际消耗", day.recordedExpenditure ?? day.planningExpenditure)
                 compactMetric("目标热量缺口", day.targetDeficit)
-                if day.phase == .past && !day.hasIntakeData {
-                    compactTextMetric("缺口", "补全饮食后计算")
-                } else {
-                    compactMetric(day.remainingIntake >= 0 ? "还可摄入" : "超出摄入", abs(day.remainingIntake))
-                }
+                compactMetric(
+                    "今日缺口",
+                    day.realizedDeficit,
+                    valueColor: day.realizedDeficit < 0 ? AppTheme.orange : AppTheme.textPrimary
+                )
+                compactMetric(day.remainingIntake >= 0 ? "还可摄入" : "超出摄入", abs(day.remainingIntake))
             }
         }
         .padding(14)
@@ -218,22 +219,18 @@ struct BudgetView: View {
         }
     }
 
-    private func compactMetric(_ title: String, _ value: Double) -> some View {
+    private func compactMetric(
+        _ title: String,
+        _ value: Double,
+        valueColor: Color = AppTheme.textPrimary
+    ) -> some View {
         HStack(spacing: 5) {
             Text(title).foregroundStyle(AppTheme.secondaryText)
             Text("\(Int(value.rounded()))")
                 .fontWeight(.semibold)
-                .foregroundStyle(AppTheme.textPrimary)
+                .foregroundStyle(valueColor)
         }
         .font(.caption.monospacedDigit())
-    }
-
-    private func compactTextMetric(_ title: String, _ value: String) -> some View {
-        HStack(spacing: 5) {
-            Text(title).foregroundStyle(AppTheme.secondaryText)
-            Text(value).fontWeight(.semibold).foregroundStyle(AppTheme.textPrimary)
-        }
-        .font(.caption)
     }
 
     private func weekdayText(_ date: Date) -> String {

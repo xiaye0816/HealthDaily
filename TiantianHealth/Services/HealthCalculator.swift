@@ -47,6 +47,11 @@ enum HealthCalculator {
             guard phase != .past || hasIntakeData else { return nil }
             return recordedExpenditure.map { $0 - consumed }
         }
+        var realizedDeficit: Double {
+            guard phase != .future,
+                  let recordedExpenditure else { return 0 }
+            return recordedExpenditure - consumed
+        }
         var remainingIntake: Double { targetIntake - consumed }
 
         var forecastDeficit: Double? {
