@@ -203,6 +203,7 @@ struct RootView: View {
     @StateObject private var healthKit = HealthKitService.shared
     @State private var isShowingSplash = true
     @State private var splashOpacity = 1.0
+    @State private var currentDay = DateTools.day(.now)
 
     private var currentProfile: UserProfile? { profiles.first }
     private var latestWeightKG: Double {
@@ -212,7 +213,7 @@ struct RootView: View {
     private var widgetCalorieDays: [HealthCalculator.CalorieDeficitDay] {
         guard let profile = currentProfile else { return [] }
         return HealthCalculator.healthDrivenCalorieDays(
-            dates: DateTools.weekDays(containing: .now),
+            dates: DateTools.weekDays(containing: currentDay),
             profile: profile,
             latestWeightKG: latestWeightKG,
             todayEnergy: healthKit.todayEnergy,
@@ -236,7 +237,8 @@ struct RootView: View {
         ZStack {
             Group {
                 if hasCompletedOnboarding, !profiles.isEmpty {
-                    MainTabView()
+                    MainTabView(referenceDate: currentDay)
+                        .id(currentDay)
                 } else {
                     OnboardingView {
                         withAnimation(.easeInOut(duration: 0.25)) {
@@ -277,8 +279,11 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
-            WidgetSnapshotPublisher.publish(widgetSnapshotSource)
-            Task { await synchronizeHealthIfNeeded() }
+            refreshCurrentDayAndHealth()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            guard scenePhase == .active else { return }
+            refreshCurrentDayAndHealth()
         }
         .onChange(of: healthKit.isEnabled) { _, isEnabled in
             guard isEnabled else { return }
@@ -288,6 +293,11 @@ struct RootView: View {
             guard hasCompletedOnboarding, !profiles.isEmpty else { return }
             router.open(url: url)
         }
+    }
+
+    private func refreshCurrentDayAndHealth() {
+        currentDay = DateTools.day(.now)
+        Task { await synchronizeHealthIfNeeded() }
     }
 
     @MainActor

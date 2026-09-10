@@ -16,7 +16,12 @@ struct TodayView: View {
     @State private var pulseAddButton = false
     @State private var mealTapFeedback = 0
 
-    private let today = DateTools.day(.now)
+    private let today: Date
+
+    init(referenceDate: Date = .now) {
+        today = DateTools.day(referenceDate)
+    }
+
     private var profile: UserProfile? { profiles.first }
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
     private var todayLogs: [FoodLogEntry] {
@@ -83,7 +88,7 @@ struct TodayView: View {
             .navigationTitle("今天")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Text(Date.now.formatted(.dateTime.month().day().weekday(.abbreviated)))
+                    Text(today.formatted(.dateTime.month().day().weekday(.abbreviated)))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
                 }

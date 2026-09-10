@@ -478,6 +478,53 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(days[1].source, .healthProjected)
     }
 
+    func testYesterdayTodayEnergyIsIgnoredAfterMidnight() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 11)))
+        let reference = try XCTUnwrap(calendar.date(byAdding: .hour, value: 1, to: today))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let staleUpdate = try XCTUnwrap(calendar.date(byAdding: .hour, value: 23, to: yesterday))
+        let birthDate = try XCTUnwrap(calendar.date(byAdding: .year, value: -30, to: today))
+        let profile = UserProfile(
+            sex: .male,
+            birthDate: birthDate,
+            heightCM: 178,
+            weightUnit: .kg,
+            initialWeightKG: 80,
+            targetWeightKG: 76,
+            pace: .gentle,
+            averageSteps: 5_000,
+            baselineTDEE: 2_100
+        )
+        let state = HealthIntegrationState()
+        state.isEnabled = true
+        state.typicalRestingEnergy = 1_700
+        state.typicalActiveEnergy = 400
+
+        let day = try XCTUnwrap(HealthCalculator.healthDrivenCalorieDays(
+            dates: [today],
+            profile: profile,
+            latestWeightKG: 80,
+            todayEnergy: HealthEnergySnapshot(resting: 1_700, active: 400, updatedAt: staleUpdate),
+            historicalEnergy: [],
+            foodLogs: [],
+            exerciseLogs: [],
+            state: state,
+            healthEnabled: true,
+            referenceDate: reference,
+            calendar: calendar
+        ).first)
+
+        XCTAssertEqual(day.phase, .today)
+        XCTAssertEqual(day.source, .healthEstimated)
+        XCTAssertNil(day.actualRestingExpenditure)
+        XCTAssertNil(day.actualActiveExpenditure)
+        XCTAssertNil(day.actualExpenditure)
+        XCTAssertNil(day.recordedExpenditure)
+        XCTAssertEqual(day.planningExpenditure, 2_100, accuracy: 0.001)
+    }
+
     func testBodyFallbackIsForecastOnly() throws {
         let reference = Date.now
         let today = DateTools.day(reference)

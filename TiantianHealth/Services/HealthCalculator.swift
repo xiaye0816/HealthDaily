@@ -387,6 +387,7 @@ enum HealthCalculator {
                     }
                 case .today:
                     if let todayEnergy,
+                       calendar.isDate(todayEnergy.updatedAt, inSameDayAs: referenceDate),
                        todayEnergy.resting != nil || todayEnergy.active != nil,
                        let interval = calendar.dateInterval(of: .day, for: referenceDate),
                        interval.duration > 0 {

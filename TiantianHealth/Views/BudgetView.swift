@@ -9,7 +9,12 @@ struct BudgetView: View {
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
     @Query private var healthStates: [HealthIntegrationState]
 
-    private let today = DateTools.day(.now)
+    private let today: Date
+
+    init(referenceDate: Date = .now) {
+        today = DateTools.day(referenceDate)
+    }
+
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
     private var profile: UserProfile? { profiles.first }
     private var latestWeightKG: Double {
@@ -171,6 +176,7 @@ struct BudgetView: View {
                 total: max(day.targetDeficit, 1)
             )
             .tint(isDeficit ? (isToday ? AppTheme.green : AppTheme.deepGreen) : AppTheme.orange)
+            .accessibilityHidden(true)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
                 compactMetric(day.recordedExpenditure == nil ? "预计消耗" : "实际消耗", day.recordedExpenditure ?? day.planningExpenditure)
                 compactMetric("摄入", day.consumed)
@@ -188,6 +194,7 @@ struct BudgetView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(isToday ? AppTheme.green.opacity(0.24) : AppTheme.divider.opacity(0.7), lineWidth: 1)
         }
+        .contentShape(Rectangle())
     }
 
     private func daySubtitle(_ day: HealthCalculator.CalorieDeficitDay) -> String {
@@ -235,8 +242,15 @@ struct BudgetView: View {
 
     private func dayIdentifier(_ date: Date) -> String {
         if DateTools.isSameDay(date, today) { return "budget-day-today" }
-        if date < today { return "budget-day-past" }
-        return "budget-day-future"
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let dateKey = String(
+            format: "%04d%02d%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+        if date < today { return "budget-day-past-\(dateKey)" }
+        return "budget-day-future-\(dateKey)"
     }
 }
 

@@ -140,10 +140,21 @@ final class TiantianHealthUITests: XCTestCase {
         app.tabBars.buttons["本周"].tap()
         XCTAssertTrue(app.navigationBars["本周热量缺口"].waitForExistence(timeout: 4))
 
-        let pastBudgetDay = app.buttons.matching(identifier: "budget-day-past").firstMatch
+        let yesterday = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: -1, to: .now))
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: yesterday)
+        let yesterdayKey = String(
+            format: "budget-day-past-%04d%02d%02d",
+            try XCTUnwrap(components.year),
+            try XCTUnwrap(components.month),
+            try XCTUnwrap(components.day)
+        )
+        let pastBudgetDay = app.buttons[yesterdayKey]
         XCTAssertTrue(pastBudgetDay.waitForExistence(timeout: 3))
+        for _ in 0..<3 where !pastBudgetDay.isHittable { app.swipeUp() }
+        XCTAssertTrue(pastBudgetDay.isHittable)
         pastBudgetDay.tap()
-        XCTAssertTrue(app.staticTexts["目标缺口"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.scrollViews["daily-log-detail"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["目标缺口"].exists)
         app.buttons["daily-add-运动"].tap()
         app.textFields["exercise-type"].tap()
         app.textFields["exercise-type"].typeText("散步")
