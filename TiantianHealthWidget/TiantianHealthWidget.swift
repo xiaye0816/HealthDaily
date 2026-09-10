@@ -100,7 +100,7 @@ private struct CalorieWidgetView: View {
     }
 
     private func largeContent(_ metrics: WidgetCalorieMetrics) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             brandHeader
             HStack {
                 Text("今日热量")
@@ -116,17 +116,17 @@ private struct CalorieWidgetView: View {
             estimatedBlock(metrics, compact: false)
             Divider().overlay(WidgetPalette.track)
             statisticRow(metrics, compact: false)
-            Spacer(minLength: 0)
             Link(destination: URL(string: "tiantianhealth://food")!) {
                 Label("记录饮食", systemImage: "plus.circle.fill")
                     .font(.headline)
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 42)
+                    .frame(height: 40)
                     .background(WidgetPalette.green, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary(metrics))
     }
@@ -147,6 +147,8 @@ private struct CalorieWidgetView: View {
                 .foregroundStyle(WidgetPalette.deepGreen)
                 .lineLimit(1)
         }
+        .frame(minHeight: 20)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func compactIntakeBlock(_ metrics: WidgetCalorieMetrics) -> some View {
