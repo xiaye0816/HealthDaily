@@ -45,10 +45,9 @@ struct BudgetView: View {
     private var summary: HealthCalculator.CalorieDeficitSummary {
         HealthCalculator.calorieDeficitSummary(days: calorieDays)
     }
-    private var confirmedDayCount: Int {
-        calorieDays.filter { $0.currentDeficit != nil }.count
+    private var incompletePastDayCount: Int {
+        calorieDays.filter { $0.phase == .past }.count - summary.completedPastDayCount
     }
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -73,7 +72,7 @@ struct BudgetView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(summary.currentDeficit >= 0 ? "本周已确认缺口" : "本周已确认盈余")
+                        Text(summary.currentDeficit >= 0 ? "本周实现热量缺口" : "热量缺口亏损")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Text("\(Int(abs(summary.currentDeficit).rounded())) kcal")
@@ -85,32 +84,49 @@ struct BudgetView: View {
                     }
                     Spacer(minLength: 12)
                     VStack(alignment: .trailing, spacing: 3) {
-                        Text(summary.forecastDeficit >= 0 ? "本周预测缺口" : "本周预测盈余")
+                        Text("本周目标热量缺口")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
-                        Text("\(Int(abs(summary.forecastDeficit).rounded())) kcal")
+                        Text("\(Int(summary.targetDeficit.rounded())) kcal")
                             .font(.headline.monospacedDigit())
-                            .foregroundStyle(summary.forecastDeficit >= 0 ? AppTheme.textPrimary : AppTheme.orange)
+                            .foregroundStyle(AppTheme.textPrimary)
                     }
                 }
                 SwiftUI.ProgressView(
-                    value: min(max(0, summary.forecastDeficit), max(summary.targetDeficit, 1)),
+                    value: min(max(0, summary.currentDeficit), max(summary.targetDeficit, 1)),
                     total: max(summary.targetDeficit, 1)
                 )
-                .tint(summary.forecastDeficit >= 0 ? AppTheme.green : AppTheme.orange)
+                .tint(summary.currentDeficit >= 0 ? AppTheme.green : AppTheme.orange)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
-                    summaryMetric("目标缺口", summary.targetDeficit)
-                    summaryMetric(summary.forecastDeficit >= 0 ? "预测缺口" : "预测盈余", abs(summary.forecastDeficit))
-                    summaryMetric("已摄入", summary.consumed)
-                    summaryMetric(summary.remainingIntake >= 0 ? "全周达标还可摄入" : "超出目标摄入", abs(summary.remainingIntake))
+                    summaryMetric("本周已摄入", summary.consumed)
+                    summaryMetric(summary.weeklyRemainingIntake >= 0 ? "本周还可摄入" : "本周超出目标摄入", abs(summary.weeklyRemainingIntake))
                 }
-                Text(healthKit.isEnabled
-                     ? "已确认 \(confirmedDayCount) 天。过去与今天读取 Apple 健康；未来用近期完整日估算，下拉可刷新历史日期。"
-                     : "连接 Apple 健康后，过去和今天会显示实际缺口；当前仅显示身体信息备用估算。")
+                Divider().overlay(AppTheme.divider)
+                targetDeviationRow
+            }
+        }
+    }
+
+    private var targetDeviationRow: some View {
+        let deviation = summary.pastTargetDeviation
+        let status = deviation > 0 ? "热量缺口盈余" : (deviation < 0 ? "热量缺口亏损" : "持平")
+        return HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("目标偏离")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                Text(incompletePastDayCount > 0
+                     ? "仅统计今天以前的完整日期 · \(incompletePastDayCount) 天数据待补全"
+                     : "仅统计本周今天以前的完整日期")
                     .font(.caption2)
                     .foregroundStyle(AppTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer(minLength: 12)
+            Text("\(status) \(Int(abs(deviation).rounded())) kcal")
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundStyle(deviation < 0 ? AppTheme.orange : AppTheme.deepGreen)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
     }
 
@@ -135,9 +151,6 @@ struct BudgetView: View {
 
     private func dayCard(_ day: HealthCalculator.CalorieDeficitDay) -> some View {
         let isToday = day.phase == .today
-        let displayedDeficit = day.currentDeficit ?? day.forecastDeficit
-        let isDeficit = (displayedDeficit ?? 0) >= 0
-
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 Text(weekdayText(day.date))
@@ -154,33 +167,21 @@ struct BudgetView: View {
                         .foregroundStyle(isToday ? AppTheme.deepGreen : AppTheme.secondaryText)
                 }
                 Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 3) {
-                    if let displayedDeficit {
-                        Text("\(day.currentDeficit == nil ? "预计" : "")\(isDeficit ? "缺口" : "盈余") \(Int(abs(displayedDeficit).rounded()))")
-                            .font(.subheadline.bold().monospacedDigit())
-                            .foregroundStyle(isDeficit ? AppTheme.deepGreen : AppTheme.orange)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    } else {
-                        Text("缺口待补全")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(AppTheme.secondaryText)
-                    }
-                    Image(systemName: "chevron.right")
-                        .font(.caption.bold())
-                        .foregroundStyle(.tertiary)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(.tertiary)
             }
-            SwiftUI.ProgressView(
-                value: min(max(0, displayedDeficit ?? 0), max(day.targetDeficit, 1)),
-                total: max(day.targetDeficit, 1)
+            IntakeEnergyProgressBar(
+                title: "实际摄入",
+                consumed: day.consumed,
+                planningExpenditure: day.planningExpenditure,
+                actualExpenditure: day.actualExpenditure,
+                targetDeficit: day.targetDeficit,
+                accessibilityIdentifier: "budget-intake-progress-\(dayIdentifier(day.date))"
             )
-            .tint(isDeficit ? (isToday ? AppTheme.green : AppTheme.deepGreen) : AppTheme.orange)
-            .accessibilityHidden(true)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
                 compactMetric(day.recordedExpenditure == nil ? "预计消耗" : "实际消耗", day.recordedExpenditure ?? day.planningExpenditure)
-                compactMetric("摄入", day.consumed)
-                compactMetric("目标缺口", day.targetDeficit)
+                compactMetric("目标热量缺口", day.targetDeficit)
                 if day.phase == .past && !day.hasIntakeData {
                     compactTextMetric("缺口", "补全饮食后计算")
                 } else {
@@ -410,8 +411,8 @@ private struct DailyLogDetailView: View {
                     .tint((displayed ?? 0) >= 0 ? AppTheme.green : AppTheme.orange)
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 10) {
                         detailMetric(status.recordedExpenditure == nil ? "预计消耗" : "实际消耗", status.recordedExpenditure ?? status.planningExpenditure)
-                        detailMetric("已摄入", status.consumed)
-                        detailMetric("目标缺口", status.targetDeficit)
+                        detailMetric("实际摄入", status.consumed)
+                        detailMetric("目标热量缺口", status.targetDeficit)
                         if status.phase == .past && !status.hasIntakeData {
                             detailTextMetric("当前缺口", "补全饮食后计算")
                         } else {

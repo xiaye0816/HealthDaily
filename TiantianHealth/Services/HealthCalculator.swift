@@ -69,6 +69,9 @@ enum HealthCalculator {
         let forecastDeficit: Double
         let consumed: Double
         let remainingIntake: Double
+        let pastTargetDeviation: Double
+        let weeklyRemainingIntake: Double
+        let completedPastDayCount: Int
     }
 
     struct DailyIntakePlan: Equatable {
@@ -465,12 +468,31 @@ enum HealthCalculator {
     }
 
     static func calorieDeficitSummary(days: [CalorieDeficitDay]) -> CalorieDeficitSummary {
-        CalorieDeficitSummary(
+        let completedPastDays = days.filter {
+            $0.phase == .past && $0.hasIntakeData && $0.currentDeficit != nil
+        }
+        let pastTargetDeviation = completedPastDays.reduce(0) {
+            $0 + ($1.currentDeficit ?? 0) - $1.targetDeficit
+        }
+        let currentAndFutureAllowance = days.reduce(0) { result, day in
+            switch day.phase {
+            case .past:
+                return result
+            case .today:
+                return result + day.remainingIntake
+            case .future:
+                return result + day.targetIntake
+            }
+        }
+        return CalorieDeficitSummary(
             targetDeficit: days.reduce(0) { $0 + $1.targetDeficit },
             currentDeficit: days.compactMap(\.currentDeficit).reduce(0, +),
             forecastDeficit: days.compactMap(\.forecastDeficit).reduce(0, +),
             consumed: days.reduce(0) { $0 + $1.consumed },
-            remainingIntake: days.reduce(0) { $0 + $1.targetIntake - $1.consumed }
+            remainingIntake: days.reduce(0) { $0 + $1.targetIntake - $1.consumed },
+            pastTargetDeviation: pastTargetDeviation,
+            weeklyRemainingIntake: pastTargetDeviation + currentAndFutureAllowance,
+            completedPastDayCount: completedPastDays.count
         )
     }
 

@@ -154,8 +154,8 @@ private struct CalorieWidgetView: View {
             compactHeading(
                 "今日已摄入",
                 detail: metrics.todayExceededIntakeLimit > 0
-                    ? "突破 (whole(metrics.todayExceededIntakeLimit))"
-                    : "预留缺口 (whole(metrics.todayTargetDeficit))",
+                    ? "突破 \(whole(metrics.todayExceededIntakeLimit))"
+                    : "预留缺口 \(whole(metrics.todayTargetDeficit))",
                 value: metrics.todayConsumed,
                 detailColor: metrics.todayExceededIntakeLimit > 0 ? WidgetPalette.deepOrange : WidgetPalette.secondary
             )
@@ -185,7 +185,7 @@ private struct CalorieWidgetView: View {
         return VStack(spacing: 3) {
             compactHeading(
                 "今日实际消耗",
-                detail: metrics.todayActualExpenditure == nil ? "等待数据" : "静息 (whole(resting)) · 活动 (whole(active))",
+                detail: metrics.todayActualExpenditure == nil ? "等待数据" : "静息 \(whole(resting)) · 活动 \(whole(active))",
                 value: metrics.todayActualExpenditure
             )
             GeometryReader { proxy in

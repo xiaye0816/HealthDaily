@@ -216,6 +216,68 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(beyondExpenditure.unconsumedReservedDeficit, 0, accuracy: 0.001)
     }
 
+    func testWeeklySummaryUsesOnlyCompletedPastDaysForTargetDeviation() {
+        let start = DateTools.day(.now)
+        func day(
+            offset: Int,
+            phase: HealthCalculator.CalorieDayPhase,
+            expenditure: Double?,
+            consumed: Double,
+            targetIntake: Double,
+            hasIntake: Bool
+        ) -> HealthCalculator.CalorieDeficitDay {
+            HealthCalculator.CalorieDeficitDay(
+                date: Calendar.current.date(byAdding: .day, value: offset, to: start)!,
+                phase: phase,
+                source: expenditure == nil ? .healthEstimated : .healthActual,
+                recordedExpenditure: expenditure,
+                planningExpenditure: targetIntake + 400,
+                actualRestingExpenditure: expenditure.map { $0 * 0.8 },
+                actualActiveExpenditure: expenditure.map { $0 * 0.2 },
+                targetDeficit: 400,
+                consumed: consumed,
+                targetIntake: targetIntake,
+                hasIntakeData: hasIntake
+            )
+        }
+
+        let days = [
+            day(offset: -3, phase: .past, expenditure: 2_500, consumed: 1_500, targetIntake: 2_100, hasIntake: true),
+            day(offset: -2, phase: .past, expenditure: 2_000, consumed: 1_800, targetIntake: 1_600, hasIntake: true),
+            day(offset: -1, phase: .past, expenditure: 2_200, consumed: 0, targetIntake: 1_800, hasIntake: false),
+            day(offset: 0, phase: .today, expenditure: 900, consumed: 1_000, targetIntake: 1_900, hasIntake: true),
+            day(offset: 1, phase: .future, expenditure: nil, consumed: 0, targetIntake: 1_800, hasIntake: false)
+        ]
+
+        let summary = HealthCalculator.calorieDeficitSummary(days: days)
+        XCTAssertEqual(summary.currentDeficit, 1_100, accuracy: 0.001)
+        XCTAssertEqual(summary.pastTargetDeviation, 400, accuracy: 0.001)
+        XCTAssertEqual(summary.weeklyRemainingIntake, 3_100, accuracy: 0.001)
+        XCTAssertEqual(summary.completedPastDayCount, 2)
+    }
+
+    func testWeeklySummaryExcludesTodayFromTargetDeviationAndAllowsOverTargetState() {
+        let today = DateTools.day(.now)
+        let day = HealthCalculator.CalorieDeficitDay(
+            date: today,
+            phase: .today,
+            source: .healthProjected,
+            recordedExpenditure: 1_000,
+            planningExpenditure: 2_300,
+            actualRestingExpenditure: 800,
+            actualActiveExpenditure: 200,
+            targetDeficit: 400,
+            consumed: 3_000,
+            targetIntake: 1_900,
+            hasIntakeData: true
+        )
+
+        let summary = HealthCalculator.calorieDeficitSummary(days: [day])
+        XCTAssertEqual(summary.pastTargetDeviation, 0, accuracy: 0.001)
+        XCTAssertEqual(summary.weeklyRemainingIntake, -1_100, accuracy: 0.001)
+        XCTAssertEqual(summary.completedPastDayCount, 0)
+    }
+
     func testStageGoalDefaultsToFivePercentAndLimitsRange() {
         XCTAssertEqual(HealthCalculator.healthyStageTarget(weightKG: 80), 76, accuracy: 0.001)
         XCTAssertEqual(HealthCalculator.healthyStageRange(weightKG: 80).lowerBound, 72, accuracy: 0.001)

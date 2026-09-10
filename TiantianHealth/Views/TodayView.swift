@@ -166,61 +166,14 @@ struct TodayView: View {
     }
 
     private var intakeEnergyBar: some View {
-        let consumed = max(0, todayStatus?.consumed ?? 0)
-        let exceeded = intakeSegments.exceededIntakeLimit
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("今日已摄入")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(Int(consumed.rounded())) kcal")
-                    .font(.subheadline.bold().monospacedDigit())
-                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.textPrimary)
-                    .contentTransition(.numericText())
-            }
-            GeometryReader { proxy in
-                let width = proxy.size.width
-                ZStack(alignment: .leading) {
-                    Capsule().fill(AppTheme.divider)
-
-                    Rectangle()
-                        .fill(AppTheme.orange.opacity(0.22))
-                        .frame(width: width * ratio(intakeSegments.unconsumedReservedDeficit))
-                        .offset(x: width * ratio(intakeSegments.reservedDeficitStart))
-
-                    HStack(spacing: 0) {
-                        AppTheme.orange
-                            .frame(width: width * ratio(intakeSegments.safeConsumed))
-                        AppTheme.deepOrange
-                            .frame(width: width * ratio(intakeSegments.exceededIntakeLimit))
-                        Spacer(minLength: 0)
-                    }
-                }
-                .clipShape(Capsule())
-            }
-            .frame(height: 10)
-            .animation(.snappy(duration: 0.3), value: consumed)
-
-            HStack(spacing: 5) {
-                Spacer()
-                Circle()
-                    .fill(exceeded > 0 ? AppTheme.deepOrange : AppTheme.orange.opacity(0.35))
-                    .frame(width: 7, height: 7)
-                Text(exceeded > 0
-                     ? "已突破 \(Int(exceeded.rounded())) kcal"
-                     : "预留热量缺口 \(Int((todayStatus?.targetDeficit ?? 0).rounded())) kcal")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.secondaryText)
-                    .contentTransition(.numericText())
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            exceeded > 0
-                ? "今日已摄入 \(Int(consumed.rounded())) 千卡，已突破目标摄入 \(Int(exceeded.rounded())) 千卡"
-                : "今日已摄入 \(Int(consumed.rounded())) 千卡，预留热量缺口 \(Int((todayStatus?.targetDeficit ?? 0).rounded())) 千卡"
+        IntakeEnergyProgressBar(
+            title: "今日已摄入",
+            consumed: todayStatus?.consumed ?? 0,
+            planningExpenditure: todayStatus?.planningExpenditure ?? 0,
+            actualExpenditure: todayStatus?.actualExpenditure,
+            targetDeficit: todayStatus?.targetDeficit ?? 0,
+            accessibilityIdentifier: "today-intake-progress"
         )
-        .accessibilityIdentifier("today-intake-progress")
     }
 
     private func singleEnergyBar(

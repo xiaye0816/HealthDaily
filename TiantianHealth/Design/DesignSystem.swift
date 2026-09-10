@@ -65,6 +65,82 @@ struct PressableRowButtonStyle: ButtonStyle {
     }
 }
 
+struct IntakeEnergyProgressBar: View {
+    let title: String
+    let consumed: Double
+    let planningExpenditure: Double
+    let actualExpenditure: Double?
+    let targetDeficit: Double
+    let accessibilityIdentifier: String
+
+    private var segments: HealthCalculator.IntakeProgressSegments {
+        HealthCalculator.intakeProgressSegments(
+            consumed: consumed,
+            planningExpenditure: planningExpenditure,
+            actualExpenditure: actualExpenditure,
+            targetDeficit: targetDeficit
+        )
+    }
+
+    private func ratio(_ value: Double) -> Double {
+        min(1, max(0, value / max(segments.scale, 1)))
+    }
+
+    var body: some View {
+        let exceeded = segments.exceededIntakeLimit
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(Int(max(0, consumed).rounded())) kcal")
+                    .font(.subheadline.bold().monospacedDigit())
+                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.textPrimary)
+                    .contentTransition(.numericText())
+            }
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AppTheme.divider)
+                    Rectangle()
+                        .fill(AppTheme.orange.opacity(0.22))
+                        .frame(width: width * ratio(segments.unconsumedReservedDeficit))
+                        .offset(x: width * ratio(segments.reservedDeficitStart))
+                    HStack(spacing: 0) {
+                        AppTheme.orange
+                            .frame(width: width * ratio(segments.safeConsumed))
+                        AppTheme.deepOrange
+                            .frame(width: width * ratio(segments.exceededIntakeLimit))
+                        Spacer(minLength: 0)
+                    }
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: 10)
+            .animation(.snappy(duration: 0.3), value: consumed)
+            HStack(spacing: 5) {
+                Spacer()
+                Circle()
+                    .fill(exceeded > 0 ? AppTheme.deepOrange : AppTheme.orange.opacity(0.35))
+                    .frame(width: 7, height: 7)
+                Text(exceeded > 0
+                     ? "已突破 \(Int(exceeded.rounded())) kcal"
+                     : "预留热量缺口 \(Int(max(0, targetDeficit).rounded())) kcal")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.secondaryText)
+                    .contentTransition(.numericText())
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            exceeded > 0
+                ? "\(title) \(Int(max(0, consumed).rounded())) 千卡，已突破目标摄入 \(Int(exceeded.rounded())) 千卡"
+                : "\(title) \(Int(max(0, consumed).rounded())) 千卡，预留热量缺口 \(Int(max(0, targetDeficit).rounded())) 千卡"
+        )
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
 extension View {
     func appScreenBackground() -> some View {
         scrollContentBackground(.hidden)
