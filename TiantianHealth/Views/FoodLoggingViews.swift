@@ -6,8 +6,8 @@ struct FoodPickerView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var presets: [FoodPreset]
 
-    let meal: MealType
     let date: Date
+    @State private var meal: MealType
     @State private var searchText = ""
     @State private var selectedCounts: [UUID: Int] = [:]
     @State private var showingNewFood = false
@@ -15,6 +15,11 @@ struct FoodPickerView: View {
     @State private var addTrigger = false
     @State private var selectionTapFeedback = 0
     @State private var saveErrorMessage: String?
+
+    init(meal: MealType, date: Date) {
+        self.date = date
+        _meal = State(initialValue: meal)
+    }
 
     private var filteredPresets: [FoodPreset] {
         let ordered = FoodPresetOrdering.sortedByRecentUse(presets)
@@ -31,10 +36,11 @@ struct FoodPickerView: View {
     var body: some View {
         VStack(spacing: 0) {
             BrandSheetHeader(
-                title: "记录\(meal.rawValue)",
-                subtitle: "\(date.formatted(.dateTime.month().day())) · 从常用食物快速添加，也可以直接记热量",
-                symbol: meal.symbol
+                title: "记录饮食",
+                subtitle: "\(date.formatted(.dateTime.month().day())) · 选择餐次后从常用食物快速添加",
+                symbol: "fork.knife"
             ) { dismiss() }
+            mealPicker
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AppTheme.secondaryText)
                 TextField("搜索我的食材", text: $searchText)
@@ -51,7 +57,7 @@ struct FoodPickerView: View {
             .frame(height: 46)
             .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(.horizontal, 18)
-            .padding(.top, 14)
+            .padding(.top, 10)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     quickActions
@@ -97,6 +103,23 @@ struct FoodPickerView: View {
         } message: {
             Text(saveErrorMessage ?? "请稍后再试，已选择的食物仍然保留。")
         }
+    }
+
+    private var mealPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("餐次")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.secondaryText)
+            Picker("餐次", selection: $meal) {
+                ForEach(MealType.allCases) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("food-meal-picker")
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 12)
     }
 
     private var quickActions: some View {

@@ -53,14 +53,16 @@ struct TodayView: View {
     private var weekSummary: HealthCalculator.CalorieDeficitSummary {
         HealthCalculator.calorieDeficitSummary(days: calorieDays)
     }
-    private var progressScale: Double {
-        max(
-            todayStatus?.consumed ?? 0,
-            todayStatus?.actualExpenditure ?? 0,
-            todayStatus?.planningExpenditure ?? 0,
-            1
+    private var intakeSegments: HealthCalculator.IntakeProgressSegments {
+        HealthCalculator.intakeProgressSegments(
+            consumed: todayStatus?.consumed ?? 0,
+            planningExpenditure: todayStatus?.planningExpenditure ?? 0,
+            actualExpenditure: todayStatus?.actualExpenditure,
+            targetDeficit: todayStatus?.targetDeficit ?? 0
         )
     }
+
+    private var progressScale: Double { intakeSegments.scale }
 
     var body: some View {
         NavigationStack {
@@ -115,12 +117,7 @@ struct TodayView: View {
                         .background(AppTheme.softSurface, in: Capsule())
                 }
 
-                singleEnergyBar(
-                    title: "今日已摄入",
-                    value: todayStatus?.consumed ?? 0,
-                    color: AppTheme.orange,
-                    identifier: "today-intake-progress"
-                )
+                intakeEnergyBar
 
                 actualEnergyBar
 
@@ -136,7 +133,7 @@ struct TodayView: View {
 
                 HStack(alignment: .top, spacing: 14) {
                     heroStatistic(
-                        title: "目标缺口",
+                        title: "目标热量缺口",
                         value: todayStatus?.targetDeficit ?? 0,
                         color: AppTheme.textPrimary
                     )
@@ -151,8 +148,6 @@ struct TodayView: View {
                     )
                 }
 
-                healthSourceCaption
-
                 Button {
                     selectedMeal = suggestedMeal
                     pulseAddButton.toggle()
@@ -163,6 +158,64 @@ struct TodayView: View {
                 .sensoryFeedback(.impact(flexibility: .soft), trigger: pulseAddButton)
             }
         }
+    }
+
+    private var intakeEnergyBar: some View {
+        let consumed = max(0, todayStatus?.consumed ?? 0)
+        let exceeded = intakeSegments.exceededIntakeLimit
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("今日已摄入")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(Int(consumed.rounded())) kcal")
+                    .font(.subheadline.bold().monospacedDigit())
+                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.textPrimary)
+                    .contentTransition(.numericText())
+            }
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AppTheme.divider)
+
+                    Rectangle()
+                        .fill(AppTheme.orange.opacity(0.22))
+                        .frame(width: width * ratio(intakeSegments.unconsumedReservedDeficit))
+                        .offset(x: width * ratio(intakeSegments.reservedDeficitStart))
+
+                    HStack(spacing: 0) {
+                        AppTheme.orange
+                            .frame(width: width * ratio(intakeSegments.safeConsumed))
+                        AppTheme.deepOrange
+                            .frame(width: width * ratio(intakeSegments.exceededIntakeLimit))
+                        Spacer(minLength: 0)
+                    }
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: 10)
+            .animation(.snappy(duration: 0.3), value: consumed)
+
+            HStack(spacing: 5) {
+                Spacer()
+                Circle()
+                    .fill(exceeded > 0 ? AppTheme.deepOrange : AppTheme.orange.opacity(0.35))
+                    .frame(width: 7, height: 7)
+                Text(exceeded > 0
+                     ? "已突破 \(Int(exceeded.rounded())) kcal"
+                     : "预留热量缺口 \(Int((todayStatus?.targetDeficit ?? 0).rounded())) kcal")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.secondaryText)
+                    .contentTransition(.numericText())
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            exceeded > 0
+                ? "今日已摄入 \(Int(consumed.rounded())) 千卡，已突破目标摄入 \(Int(exceeded.rounded())) 千卡"
+                : "今日已摄入 \(Int(consumed.rounded())) 千卡，预留热量缺口 \(Int((todayStatus?.targetDeficit ?? 0).rounded())) 千卡"
+        )
+        .accessibilityIdentifier("today-intake-progress")
     }
 
     private func singleEnergyBar(
@@ -270,37 +323,12 @@ struct TodayView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var healthSourceCaption: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if healthKit.isRefreshing {
-                SwiftUI.ProgressView()
-                    .controlSize(.small)
-            } else {
-                Image(systemName: healthKit.isEnabled ? "arrow.triangle.2.circlepath" : "info.circle")
-                    .foregroundStyle(healthKit.isEnabled ? AppTheme.green : AppTheme.secondaryText)
-            }
-            Text(healthSourceText)
-                .font(.caption2)
-                .foregroundStyle(AppTheme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var healthSourceText: String {
-        if healthKit.isRefreshing {
-            return "正在更新 Apple 健康数据…"
-        }
-        if let updatedAt = healthKit.todayEnergy?.updatedAt {
-            return "实际消耗更新于 \(updatedAt.formatted(.dateTime.hour().minute()))；下拉可重新读取。"
-        }
-        if healthKit.isEnabled {
-            return "Apple 健康暂时没有今日能量，当前先按近期完整日估算。"
-        }
-        return "连接 Apple 健康后可显示实时消耗；当前使用身体信息备用估算。"
-    }
-
     private func energyRatio(_ value: Double) -> Double {
-        min(1, max(0, value / progressScale))
+        ratio(value)
+    }
+
+    private func ratio(_ value: Double) -> Double {
+        min(1, max(0, value / max(progressScale, 1)))
     }
 
     private var mealSection: some View {

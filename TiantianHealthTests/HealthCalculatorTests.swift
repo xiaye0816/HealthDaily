@@ -179,6 +179,43 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(protectedPlan.targetIntake, 1_500, accuracy: 0.001)
     }
 
+    func testIntakeProgressSegmentsReserveDeficitAndExposeOverflow() {
+        let normal = HealthCalculator.intakeProgressSegments(
+            consumed: 1_530,
+            planningExpenditure: 2_356,
+            actualExpenditure: 2_156,
+            targetDeficit: 425
+        )
+        XCTAssertEqual(normal.scale, 2_356, accuracy: 0.001)
+        XCTAssertEqual(normal.intakeLimit, 1_931, accuracy: 0.001)
+        XCTAssertEqual(normal.safeConsumed, 1_530, accuracy: 0.001)
+        XCTAssertEqual(normal.exceededIntakeLimit, 0, accuracy: 0.001)
+        XCTAssertEqual(normal.unconsumedReservedDeficit, 425, accuracy: 0.001)
+        XCTAssertEqual(normal.reservedDeficitStart, 1_931, accuracy: 0.001)
+
+        let withinReserve = HealthCalculator.intakeProgressSegments(
+            consumed: 2_100,
+            planningExpenditure: 2_356,
+            actualExpenditure: nil,
+            targetDeficit: 425
+        )
+        XCTAssertEqual(withinReserve.safeConsumed, 1_931, accuracy: 0.001)
+        XCTAssertEqual(withinReserve.exceededIntakeLimit, 169, accuracy: 0.001)
+        XCTAssertEqual(withinReserve.unconsumedReservedDeficit, 256, accuracy: 0.001)
+        XCTAssertEqual(withinReserve.reservedDeficitStart, 2_100, accuracy: 0.001)
+
+        let beyondExpenditure = HealthCalculator.intakeProgressSegments(
+            consumed: 2_600,
+            planningExpenditure: 2_356,
+            actualExpenditure: 2_450,
+            targetDeficit: 425
+        )
+        XCTAssertEqual(beyondExpenditure.scale, 2_600, accuracy: 0.001)
+        XCTAssertEqual(beyondExpenditure.intakeLimit, 2_025, accuracy: 0.001)
+        XCTAssertEqual(beyondExpenditure.exceededIntakeLimit, 575, accuracy: 0.001)
+        XCTAssertEqual(beyondExpenditure.unconsumedReservedDeficit, 0, accuracy: 0.001)
+    }
+
     func testStageGoalDefaultsToFivePercentAndLimitsRange() {
         XCTAssertEqual(HealthCalculator.healthyStageTarget(weightKG: 80), 76, accuracy: 0.001)
         XCTAssertEqual(HealthCalculator.healthyStageRange(weightKG: 80).lowerBound, 72, accuracy: 0.001)

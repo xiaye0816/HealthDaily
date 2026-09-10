@@ -77,6 +77,19 @@ enum HealthCalculator {
         let targetIntake: Double
     }
 
+    struct IntakeProgressSegments: Equatable {
+        let scale: Double
+        let expenditureBasis: Double
+        let intakeLimit: Double
+        let safeConsumed: Double
+        let exceededIntakeLimit: Double
+        let unconsumedReservedDeficit: Double
+
+        var reservedDeficitStart: Double {
+            max(intakeLimit, safeConsumed + exceededIntakeLimit)
+        }
+    }
+
     static func age(from birthDate: Date, on referenceDate: Date = .now) -> Int {
         max(0, Calendar.current.dateComponents([.year], from: birthDate, to: referenceDate).year ?? 0)
     }
@@ -167,6 +180,30 @@ enum HealthCalculator {
             expenditureBasis: basis,
             targetDeficit: effectiveDeficit,
             targetIntake: max(max(0, minimumCalories), basis - effectiveDeficit)
+        )
+    }
+
+    static func intakeProgressSegments(
+        consumed: Double,
+        planningExpenditure: Double,
+        actualExpenditure: Double?,
+        targetDeficit: Double
+    ) -> IntakeProgressSegments {
+        let safeConsumedValue = max(0, consumed)
+        let expenditureBasis = max(0, planningExpenditure, actualExpenditure ?? 0)
+        let effectiveDeficit = min(max(0, targetDeficit), expenditureBasis)
+        let intakeLimit = max(0, expenditureBasis - effectiveDeficit)
+        let consumedWithinLimit = min(safeConsumedValue, intakeLimit)
+        let exceededLimit = max(0, safeConsumedValue - intakeLimit)
+        let consumedFromReserve = min(exceededLimit, effectiveDeficit)
+
+        return IntakeProgressSegments(
+            scale: max(1, expenditureBasis, safeConsumedValue),
+            expenditureBasis: expenditureBasis,
+            intakeLimit: intakeLimit,
+            safeConsumed: consumedWithinLimit,
+            exceededIntakeLimit: exceededLimit,
+            unconsumedReservedDeficit: max(0, effectiveDeficit - consumedFromReserve)
         )
     }
 

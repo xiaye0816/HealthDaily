@@ -791,6 +791,11 @@ struct CalorieConverterView: View {
         .background(AppTheme.background)
         .navigationTitle("热量换算")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            isInputFocused = true
+        }
     }
 
     private func formatted(_ value: Double) -> String {

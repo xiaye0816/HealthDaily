@@ -4,6 +4,7 @@ enum AppTheme {
     static let green = Color(red: 24 / 255, green: 163 / 255, blue: 104 / 255)
     static let deepGreen = Color(red: 16 / 255, green: 101 / 255, blue: 68 / 255)
     static let orange = Color(red: 239 / 255, green: 126 / 255, blue: 51 / 255)
+    static let deepOrange = Color(red: 194 / 255, green: 76 / 255, blue: 30 / 255)
     static let background = Color(red: 247 / 255, green: 249 / 255, blue: 246 / 255)
     static let surface = Color.white
     static let softSurface = Color(red: 239 / 255, green: 246 / 255, blue: 241 / 255)

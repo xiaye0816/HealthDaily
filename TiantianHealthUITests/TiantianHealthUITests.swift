@@ -56,6 +56,7 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["today-actual-expenditure-progress"].exists)
         XCTAssertTrue(app.otherElements["today-estimated-expenditure-progress"].exists)
         XCTAssertFalse(app.buttons["add-exercise"].exists)
+        XCTAssertTrue(app.staticTexts["目标热量缺口"].exists)
         capture("05-today-energy-bars")
 
         let breakfastRow = app.buttons["meal-row-早餐"]
@@ -68,6 +69,9 @@ final class TiantianHealthUITests: XCTestCase {
 
         app.buttons["记录饮食"].tap()
         XCTAssertTrue(app.buttons["新建食物"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.segmentedControls["food-meal-picker"].exists)
+        app.segmentedControls["food-meal-picker"].buttons["午餐"].tap()
+        capture("05a-food-meal-picker")
         app.buttons["新建食物"].tap()
         XCTAssertTrue(app.staticTexts["新建食物"].waitForExistence(timeout: 4))
         capture("06-food-editor")
@@ -82,6 +86,7 @@ final class TiantianHealthUITests: XCTestCase {
 
         let addToMeal = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "加入")).firstMatch
         XCTAssertTrue(addToMeal.waitForExistence(timeout: 4))
+        XCTAssertEqual(addToMeal.label, "加入午餐")
         addToMeal.tap()
         XCTAssertTrue(app.staticTexts["煎鸡胸"].waitForExistence(timeout: 5))
 
@@ -191,7 +196,7 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(converter.waitForExistence(timeout: 3))
         converter.tap()
         XCTAssertTrue(app.navigationBars["热量换算"].waitForExistence(timeout: 4))
-        app.textFields["calorie-converter-input"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
         app.textFields["calorie-converter-input"].typeText("418.4")
         XCTAssertTrue(app.staticTexts["100"].waitForExistence(timeout: 3))
         app.navigationBars["热量换算"].buttons["我的"].tap()
