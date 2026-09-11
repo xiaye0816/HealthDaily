@@ -14,6 +14,7 @@ struct FoodPhotoAnalyzerView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var image: UIImage?
     @State private var originalImageData: Data?
+    @State private var userNote = ""
     @State private var analysis: FoodPhotoAnalysis?
     @State private var items: [EditableFoodAnalysisItem] = []
     @State private var overallName = ""
@@ -87,6 +88,7 @@ struct FoodPhotoAnalyzerView: View {
                 analysis = nil
                 items = []
                 overallName = ""
+                userNote = ""
                 currentHistoryID = nil
             }
             .ignoresSafeArea()
@@ -101,6 +103,7 @@ struct FoodPhotoAnalyzerView: View {
                     analysis = nil
                     items = []
                     overallName = ""
+                    userNote = ""
                     currentHistoryID = nil
                 }
             }
@@ -125,14 +128,11 @@ struct FoodPhotoAnalyzerView: View {
         }
         .sheet(isPresented: $showingSaveOptions) {
             FoodAnalysisSaveSheet(
-                selectedCount: selectedItems.count,
-                selectedCalories: selectedCalories,
+                items: selectedItems,
                 suggestedName: overallName,
                 suggestedMeal: meal
             ) { request in
                 meal = request.meal
-                overallName = request.wholeName
-                updateCurrentHistory()
                 showingSaveOptions = false
                 beginSave(request)
             }
@@ -198,6 +198,14 @@ struct FoodPhotoAnalyzerView: View {
                     .resizable().scaledToFit()
                     .frame(maxHeight: 280)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                TextField("补充说明（可选）", text: $userNote, axis: .vertical)
+                    .lineLimit(2...4)
+                    .padding(13)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("photo-analysis-note")
+                    .onChange(of: userNote) { _, value in
+                        if value.count > 200 { userNote = String(value.prefix(200)) }
+                    }
                 Button {
                     Task { await analyze(image) }
                 } label: {
@@ -319,6 +327,7 @@ struct FoodPhotoAnalyzerView: View {
             analysis = nil
             items = []
             overallName = ""
+            userNote = ""
             currentHistoryID = nil
         } catch { errorMessage = error.localizedDescription }
     }
@@ -329,7 +338,11 @@ struct FoodPhotoAnalyzerView: View {
         do {
             guard let key = try DeepSeekCredentialStore.read() else { throw DeepSeekAnalysisError.missingKey }
             let data = try FoodPhotoImageProcessor.jpegData(from: image)
-            let result = try await DeepSeekVisionService().analyze(imageData: data, apiKey: key)
+            let result = try await DeepSeekVisionService().analyze(
+                imageData: data,
+                apiKey: key,
+                userNote: userNote
+            )
             analysis = result
             items = result.items.map(EditableFoodAnalysisItem.init)
             overallName = result.overallName
@@ -341,14 +354,14 @@ struct FoodPhotoAnalyzerView: View {
         let itemsToSave: [EditableFoodAnalysisItem]
         switch request.grouping {
         case .separate:
-            itemsToSave = selectedItems
+            itemsToSave = request.items
         case .whole:
             itemsToSave = [EditableFoodAnalysisItem(
                 name: request.wholeName,
                 category: "整份",
                 amount: 1,
                 unit: FoodUnit.serving.rawValue,
-                calories: selectedCalories,
+                calories: request.wholeCalories,
                 basis: selectedItems.map(\.name).joined(separator: "、")
             )]
         }
@@ -454,7 +467,8 @@ struct FoodPhotoAnalyzerView: View {
             confidence: analysis.confidence,
             items: updatedItems,
             assumptions: analysis.assumptions,
-            requiresUserConfirmation: analysis.requiresUserConfirmation
+            requiresUserConfirmation: analysis.requiresUserConfirmation,
+            userNote: analysis.userNote
         )
     }
 
@@ -509,6 +523,7 @@ struct FoodPhotoAnalyzerView: View {
         analysis = savedAnalysis
         items = savedAnalysis.items.map(EditableFoodAnalysisItem.init)
         overallName = record.overallName
+        userNote = savedAnalysis.userNote ?? ""
         currentHistoryID = record.id
     }
 
@@ -564,7 +579,7 @@ struct FoodPhotoAnalyzerView: View {
     )
 }
 
-struct EditableFoodAnalysisItem: Identifiable {
+struct EditableFoodAnalysisItem: Identifiable, Equatable {
     let id = UUID()
     let sourceID: String
     var name: String
@@ -611,7 +626,9 @@ struct FoodAnalysisSaveRequest: Equatable {
     var grouping: FoodAnalysisSaveGrouping
     var action: FoodAnalysisSaveAction
     var meal: MealType
+    var items: [EditableFoodAnalysisItem]
     var wholeName: String
+    var wholeCalories: Double
 }
 
 enum FoodAnalysisDuplicateChoice: String, CaseIterable, Identifiable {
@@ -666,30 +683,36 @@ enum FoodAnalysisLibraryPlanner {
 
 private struct FoodAnalysisSaveSheet: View {
     @Environment(\.dismiss) private var dismiss
-    let selectedCount: Int
-    let selectedCalories: Double
     let onConfirm: (FoodAnalysisSaveRequest) -> Void
     @State private var grouping: FoodAnalysisSaveGrouping = .separate
     @State private var action: FoodAnalysisSaveAction = .libraryAndRecord
     @State private var meal: MealType
+    @State private var items: [EditableFoodAnalysisItem]
     @State private var wholeName: String
+    @State private var wholeCalories: Double
 
     init(
-        selectedCount: Int,
-        selectedCalories: Double,
+        items: [EditableFoodAnalysisItem],
         suggestedName: String,
         suggestedMeal: MealType,
         onConfirm: @escaping (FoodAnalysisSaveRequest) -> Void
     ) {
-        self.selectedCount = selectedCount
-        self.selectedCalories = selectedCalories
         self.onConfirm = onConfirm
         _meal = State(initialValue: suggestedMeal)
+        _items = State(initialValue: items)
         _wholeName = State(initialValue: suggestedName)
+        _wholeCalories = State(initialValue: items.reduce(0) { $0 + $1.calories })
     }
 
     private var canSave: Bool {
-        selectedCount > 0 && (grouping == .separate || !wholeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        switch grouping {
+        case .separate:
+            !items.isEmpty && items.allSatisfy {
+                !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.calories > 0
+            }
+        case .whole:
+            !wholeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && wholeCalories > 0
+        }
     }
 
     var body: some View {
@@ -706,18 +729,34 @@ private struct FoodAnalysisSaveSheet: View {
                 .accessibilityIdentifier("photo-save-grouping")
 
                 if grouping == .separate {
-                    Label("将 \(selectedCount) 个选中项目分别保存，方便下次自由组合", systemImage: "square.grid.2x2")
+                    Label("将 \(items.count) 个选中项目分别保存，方便下次自由组合", systemImage: "square.grid.2x2")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
+                    VStack(spacing: 10) {
+                        ForEach(items.indices, id: \.self) { index in
+                            separateItemEditor(index: index)
+                        }
+                    }
                 } else {
-                    TextField("整份名称", text: $wholeName)
-                        .textInputAutocapitalization(.never)
-                        .padding(13)
-                        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityIdentifier("photo-whole-name")
-                    Label("合计 \(Int(selectedCalories.rounded())) kcal，保存为 1 份", systemImage: "shippingbox.fill")
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("整份名称", text: $wholeName)
+                            .textInputAutocapitalization(.never)
+                            .padding(13)
+                            .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+                            .accessibilityIdentifier("photo-whole-name")
+                        calorieEditor(value: $wholeCalories, identifier: "photo-whole-calories")
+                    }
+                    .padding(12)
+                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+                    Label("保存为 1 份", systemImage: "shippingbox.fill")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
+                }
+
+                if !canSave {
+                    Label("请填写名称和大于 0 的热量", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.orange)
                 }
             }
 
@@ -752,7 +791,13 @@ private struct FoodAnalysisSaveSheet: View {
                     grouping: grouping,
                     action: action,
                     meal: meal,
-                    wholeName: wholeName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    items: items.map { item in
+                        var normalized = item
+                        normalized.name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return normalized
+                    },
+                    wholeName: wholeName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    wholeCalories: wholeCalories
                 ))
             }
             .buttonStyle(BrandButtonStyle())
@@ -785,6 +830,49 @@ private struct FoodAnalysisSaveSheet: View {
         }
         .buttonStyle(PressableRowButtonStyle(cornerRadius: 12))
         .accessibilityIdentifier(value == .libraryOnly ? "photo-destination-library" : "photo-destination-record")
+    }
+
+    private func separateItemEditor(index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("分项 \(index + 1)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.secondaryText)
+            TextField("食物名称", text: $items[index].name)
+                .textInputAutocapitalization(.never)
+                .padding(13)
+                .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("photo-separate-name-\(index)")
+            calorieEditor(value: $items[index].calories, identifier: "photo-separate-calories-\(index)")
+        }
+        .padding(12)
+        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func calorieEditor(value: Binding<Double>, identifier: String) -> some View {
+        HStack(spacing: 8) {
+            Text("热量")
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.secondaryText)
+            Spacer(minLength: 8)
+            TextField("0", text: Binding(
+                get: { value.wrappedValue.cleanString },
+                set: { value.wrappedValue = number($0) }
+            ))
+            .keyboardType(.decimalPad)
+            .multilineTextAlignment(.trailing)
+            .font(.subheadline.bold().monospacedDigit())
+            .frame(maxWidth: 110)
+            .accessibilityIdentifier(identifier)
+            Text("kcal")
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+        .padding(13)
+        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func number(_ value: String) -> Double {
+        Double(value.replacingOccurrences(of: ",", with: ".")) ?? 0
     }
 }
 
@@ -892,6 +980,7 @@ private struct FoodPhotoAnalysisHistoryView: View {
             errorMessage = "历史记录没有清空成功，请重试。"
         }
     }
+
 }
 
 private struct FoodPhotoAnalysisHistoryDetailView: View {
@@ -914,6 +1003,18 @@ private struct FoodPhotoAnalysisHistoryDetailView: View {
                             Text("\(Int(record.totalCalories.rounded())) kcal")
                                 .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
                                 .foregroundStyle(AppTheme.deepGreen)
+                            if let note = analysis.userNote,
+                               !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Divider()
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("补充说明")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                    Text(note)
+                                        .font(.subheadline)
+                                        .foregroundStyle(AppTheme.textPrimary)
+                                }
+                            }
                             Divider()
                             ForEach(analysis.items) { item in
                                 HStack(alignment: .firstTextBaseline) {

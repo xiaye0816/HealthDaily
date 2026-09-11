@@ -24,6 +24,7 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(result.overallName, "牛肉米饭套餐")
         XCTAssertEqual(result.items.reduce(0) { $0 + $1.calories }, 520, accuracy: 0.001)
         XCTAssertTrue(result.requiresUserConfirmation)
+        XCTAssertNil(result.userNote)
     }
 
     func testDeepSeekResponseFindsNestedOutputText() throws {
@@ -42,6 +43,37 @@ final class HealthCalculatorTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(object["model"] as? String, DeepSeekVisionService.model)
         XCTAssertEqual(object["input"] as? String, "只回答 OK")
+    }
+
+    func testDeepSeekAnalysisRequestIncludesOptionalUserNote() throws {
+        let request = try DeepSeekVisionService().analysisRequest(
+            imageData: Data([0x01, 0x02]),
+            apiKey: "test-key",
+            userNote: "  请重点识别包装内容  "
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let input = try XCTUnwrap(object["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+        let prompt = try XCTUnwrap(content.first?["text"] as? String)
+
+        XCTAssertTrue(prompt.contains("用户补充说明：请重点识别包装内容"))
+        XCTAssertFalse(prompt.contains("  请重点"))
+    }
+
+    func testDeepSeekAnalysisRequestOmitsEmptyUserNote() throws {
+        let request = try DeepSeekVisionService().analysisRequest(
+            imageData: Data([0x01]),
+            apiKey: "test-key",
+            userNote: "   "
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let input = try XCTUnwrap(object["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+        let prompt = try XCTUnwrap(content.first?["text"] as? String)
+
+        XCTAssertFalse(prompt.contains("用户补充说明："))
     }
 
     func testEditableFoodAnalysisSelectionTotal() {
@@ -75,11 +107,13 @@ final class HealthCalculatorTests: XCTestCase {
                 .init(id: "rice", name: "米饭", category: "主食", estimatedAmount: 1, unit: "碗", calories: 200, basis: "约一碗", confidence: 0.8)
             ],
             assumptions: [],
-            requiresUserConfirmation: false
+            requiresUserConfirmation: false,
+            userNote: "包装显示净含量 200 g"
         )
         let record = try FoodPhotoAnalysisRecord(imageFilename: "fixture.image", overallName: analysis.overallName, analysis: analysis)
         XCTAssertEqual(record.analysis, analysis)
         XCTAssertEqual(record.totalCalories, 520, accuracy: 0.001)
+        XCTAssertEqual(record.analysis?.userNote, "包装显示净含量 200 g")
     }
 
     @MainActor

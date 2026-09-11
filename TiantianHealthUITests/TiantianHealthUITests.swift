@@ -301,6 +301,10 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["保存分析结果"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.segmentedControls["photo-save-grouping"].exists)
         XCTAssertTrue(app.segmentedControls["photo-analysis-meal-picker"].exists)
+        XCTAssertTrue(app.textFields["photo-separate-name-0"].exists)
+        XCTAssertTrue(app.textFields["photo-separate-calories-0"].exists)
+        XCTAssertTrue(app.textFields["photo-separate-name-1"].exists)
+        XCTAssertFalse(app.textFields["photo-separate-name-2"].exists)
         capture("16-photo-analysis-save-options")
         app.buttons["photo-destination-library"].tap()
         XCTAssertFalse(app.segmentedControls["photo-analysis-meal-picker"].exists)
@@ -316,10 +320,8 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["photo-save-result"].tap()
         app.segmentedControls["photo-save-grouping"].buttons["整份保存"].tap()
         XCTAssertTrue(app.textFields["photo-whole-name"].exists)
-        let wholeSummary = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "合计", "保存为 1 份")
-        ).firstMatch
-        XCTAssertTrue(wholeSummary.exists)
+        XCTAssertTrue(app.textFields["photo-whole-calories"].exists)
+        XCTAssertTrue(app.staticTexts["保存为 1 份"].exists)
         app.buttons["photo-confirm-save"].tap()
         XCTAssertTrue(app.navigationBars["今天"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["茉莉清茶套餐"].exists)
