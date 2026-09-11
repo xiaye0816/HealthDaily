@@ -159,7 +159,7 @@ struct OnboardingView: View {
                             HStack {
                                 Label(healthKit.isEnabled ? "重新读取 Apple 健康体重" : "从 Apple 健康读取体重", systemImage: "heart.fill")
                                 Spacer()
-                                if healthKit.isRefreshing { ProgressView() }
+                                if healthKit.isRefreshing { SwiftUI.ProgressView() }
                             }
                             .frame(maxWidth: .infinity)
                         }

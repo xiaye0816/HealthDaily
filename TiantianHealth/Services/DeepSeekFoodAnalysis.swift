@@ -34,6 +34,21 @@ enum DeepSeekCredentialStore {
 
     static var hasKey: Bool { (try? read())?.isEmpty == false }
 
+    static var maskedKey: String? {
+        guard let key = try? read(), !key.isEmpty else { return nil }
+        return mask(key)
+    }
+
+    static func mask(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+        let prefix = normalized.hasPrefix("sk-") ? "sk-" : ""
+        let remainingLength = max(0, normalized.count - prefix.count)
+        let suffixLength = remainingLength > 4 ? 4 : 0
+        let suffix = normalized.suffix(suffixLength)
+        return "\(prefix)••••••••\(suffix)"
+    }
+
     static func read() throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -56,15 +71,24 @@ enum DeepSeekCredentialStore {
     static func save(_ value: String) throws {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { throw DeepSeekAnalysisError.missingKey }
-        try delete()
-        let query: [String: Any] = [
+        let lookup: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: account
+        ]
+        let attributes: [String: Any] = [
             kSecValueData as String: Data(normalized.utf8),
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
+
+        let updateStatus = SecItemUpdate(lookup as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else {
+            throw DeepSeekAnalysisError.credentialStorage
+        }
+
+        let newItem = lookup.merging(attributes) { _, new in new }
+        guard SecItemAdd(newItem as CFDictionary, nil) == errSecSuccess else {
             throw DeepSeekAnalysisError.credentialStorage
         }
     }

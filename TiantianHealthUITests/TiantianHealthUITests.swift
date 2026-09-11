@@ -269,6 +269,49 @@ final class TiantianHealthUITests: XCTestCase {
         capture("11-weight-chart-scrubbing")
     }
 
+    func testPhotoAnalysisResultLayoutAndDuplicateResolution() throws {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-photo-analysis"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 8))
+        app.tabBars.buttons["我的"].tap()
+        XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 4))
+
+        let analyzer = app.buttons["food-photo-analyzer"]
+        for _ in 0..<3 where !analyzer.isHittable { app.swipeUp() }
+        XCTAssertTrue(analyzer.waitForExistence(timeout: 4))
+        analyzer.tap()
+
+        XCTAssertTrue(app.navigationBars["拍照查热量"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["分析结果"].exists)
+        XCTAssertFalse(app.staticTexts["已选热量"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "置信度")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["目标进度"].exists)
+        XCTAssertFalse(app.staticTexts["体重趋势"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        XCTAssertTrue(app.segmentedControls["photo-analysis-meal-picker"].exists)
+        XCTAssertTrue(app.buttons["photo-save-library"].exists)
+        XCTAssertTrue(app.buttons["photo-save-and-log"].exists)
+        capture("15-photo-analysis-result")
+
+        app.buttons["photo-save-library"].tap()
+        XCTAssertTrue(app.staticTexts["发现相似食材"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["冰心茉莉清茶"].exists)
+        XCTAssertTrue(app.buttons["confirm-duplicate-foods"].exists)
+        capture("16-photo-analysis-duplicate")
+        app.buttons["confirm-duplicate-foods"].tap()
+        XCTAssertTrue(app.alerts["操作提示"].waitForExistence(timeout: 4))
+        app.alerts["操作提示"].buttons["知道了"].tap()
+
+        app.buttons["photo-save-and-log"].tap()
+        XCTAssertTrue(app.staticTexts["发现相似食材"].waitForExistence(timeout: 4))
+        app.buttons["confirm-duplicate-foods"].tap()
+        XCTAssertTrue(app.navigationBars["今天"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["冰心茉莉清茶"].exists)
+    }
+
     private func capture(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name

@@ -132,6 +132,7 @@ struct TiantianHealthApp: App {
         let arguments = ProcessInfo.processInfo.arguments
         let isUITesting = arguments.contains("-ui-testing")
         let isWeightChartTesting = arguments.contains("-ui-testing-weight-chart")
+        let isPhotoAnalysisTesting = arguments.contains("-ui-testing-photo-analysis")
         if isUITesting {
             UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding")
             UserDefaults.standard.removeObject(forKey: "lastDismissedReviewWeek")
@@ -150,7 +151,7 @@ struct TiantianHealthApp: App {
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
             modelContainer = try ModelContainer(for: schema, configurations: [configuration])
 
-            if isWeightChartTesting {
+            if isWeightChartTesting || isPhotoAnalysisTesting {
                 let calendar = Calendar.current
                 let today = calendar.startOfDay(for: .now)
                 let birthDate = calendar.date(byAdding: .year, value: -30, to: today) ?? today
@@ -166,10 +167,17 @@ struct TiantianHealthApp: App {
                     baselineTDEE: 2_150
                 )
                 modelContainer.mainContext.insert(profile)
-                for index in 0..<7 {
-                    let date = calendar.date(byAdding: .day, value: index - 6, to: today) ?? today
+                if isWeightChartTesting {
+                    for index in 0..<7 {
+                        let date = calendar.date(byAdding: .day, value: index - 6, to: today) ?? today
+                        modelContainer.mainContext.insert(
+                            WeightEntry(date: date, weightKG: 81 - Double(index) * (0.5 / 6))
+                        )
+                    }
+                }
+                if isPhotoAnalysisTesting {
                     modelContainer.mainContext.insert(
-                        WeightEntry(date: date, weightKG: 81 - Double(index) * (0.5 / 6))
+                        FoodPreset(name: "冰心茉莉清茶", baseQuantity: 1, unit: .serving, calories: 6)
                     )
                 }
                 try modelContainer.mainContext.save()

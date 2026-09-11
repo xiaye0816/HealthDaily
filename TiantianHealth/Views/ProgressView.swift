@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import Charts
 
-struct ProgressView: View {
+struct TrendView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var healthKit: HealthKitService

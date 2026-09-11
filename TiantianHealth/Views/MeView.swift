@@ -244,7 +244,7 @@ private struct HealthConnectionView: View {
                     }
                 } label: {
                     if healthKit.isRefreshing {
-                        ProgressView().tint(.white)
+                        SwiftUI.ProgressView().tint(.white)
                     } else {
                         Label(healthKit.isEnabled ? "立即同步" : "连接 Apple 健康", systemImage: healthKit.isEnabled ? "arrow.clockwise" : "heart.fill")
                     }

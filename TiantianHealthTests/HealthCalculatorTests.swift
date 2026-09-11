@@ -52,6 +52,29 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(item.isSelected ? item.calories : 0, 0, accuracy: 0.001)
     }
 
+    func testDeepSeekKeyMaskKeepsOnlyPrefixAndLastFourCharacters() {
+        XCTAssertEqual(
+            DeepSeekCredentialStore.mask("sk-1234567890abcdef"),
+            "sk-••••••••cdef"
+        )
+        XCTAssertFalse(DeepSeekCredentialStore.mask("sk-1234567890abcdef").contains("123456"))
+    }
+
+    func testPhotoAnalysisDuplicateMatchingNormalizesNameAndRoundsCalories() {
+        XCTAssertTrue(FoodAnalysisLibraryPlanner.isDuplicate(
+            analyzedName: "  SuperModel 零蔗糖酸奶 ",
+            analyzedCalories: 18.2,
+            presetName: "supermodel 零蔗糖酸奶",
+            presetCalories: 18.4
+        ))
+        XCTAssertFalse(FoodAnalysisLibraryPlanner.isDuplicate(
+            analyzedName: "SuperModel 零蔗糖酸奶",
+            analyzedCalories: 19.6,
+            presetName: "SuperModel 零蔗糖酸奶",
+            presetCalories: 18.4
+        ))
+    }
+
     func testMifflinRestingEnergyForMale() {
         let result = HealthCalculator.restingEnergy(sex: .male, age: 30, heightCM: 180, weightKG: 80)
         XCTAssertEqual(result, 1_780, accuracy: 0.01)

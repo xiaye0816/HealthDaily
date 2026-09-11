@@ -16,7 +16,7 @@ struct MainTabView: View {
             BudgetView(referenceDate: referenceDate)
                 .tabItem { Label("本周", systemImage: "calendar") }
                 .tag(AppTab.budget)
-            ProgressView(referenceDate: referenceDate)
+            TrendView(referenceDate: referenceDate)
                 .tabItem { Label("趋势", systemImage: "chart.line.uptrend.xyaxis") }
                 .tag(AppTab.trend)
             MeView()
