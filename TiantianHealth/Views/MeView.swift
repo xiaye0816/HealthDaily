@@ -13,6 +13,7 @@ struct MeView: View {
     @Query private var weights: [WeightEntry]
     @Query private var presets: [FoodPreset]
     @Query private var foodLogs: [FoodLogEntry]
+    @Query private var photoAnalysisRecords: [FoodPhotoAnalysisRecord]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var budgets: [DailyBudget]
     @Query private var healthStates: [HealthIntegrationState]
@@ -115,6 +116,7 @@ struct MeView: View {
 
     private func resetAllData() {
         foodLogs.forEach(modelContext.delete)
+        photoAnalysisRecords.forEach(modelContext.delete)
         exerciseLogs.forEach(modelContext.delete)
         budgets.forEach(modelContext.delete)
         weights.forEach(modelContext.delete)
@@ -125,6 +127,7 @@ struct MeView: View {
 
         do {
             try modelContext.save()
+            FoodPhotoHistoryStore.clear()
             lastDismissedReviewWeek = ""
             didMigrateActualExerciseV1 = false
             healthKit.disconnect()

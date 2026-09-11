@@ -259,6 +259,38 @@ final class FoodLogEntry {
 }
 
 @Model
+final class FoodPhotoAnalysisRecord {
+    var id: UUID
+    var createdAt: Date
+    var updatedAt: Date
+    var imageFilename: String
+    var overallName: String
+    var totalCalories: Double
+    var analysisData: Data
+
+    init(id: UUID = UUID(), imageFilename: String, overallName: String, analysis: FoodPhotoAnalysis) throws {
+        self.id = id
+        createdAt = .now
+        updatedAt = .now
+        self.imageFilename = imageFilename
+        self.overallName = overallName
+        totalCalories = analysis.totalCalories
+        analysisData = try JSONEncoder().encode(analysis)
+    }
+
+    var analysis: FoodPhotoAnalysis? {
+        try? JSONDecoder().decode(FoodPhotoAnalysis.self, from: analysisData)
+    }
+
+    func update(overallName: String, analysis: FoodPhotoAnalysis) throws {
+        self.overallName = overallName
+        totalCalories = analysis.totalCalories
+        analysisData = try JSONEncoder().encode(analysis)
+        updatedAt = .now
+    }
+}
+
+@Model
 final class ExerciseLogEntry {
     var id: UUID
     var date: Date

@@ -20,6 +20,7 @@ struct FoodPhotoAnalysis: Codable, Equatable {
     }
 
     var sceneType: String
+    var overallName: String
     var totalCalories: Double
     var calorieRange: CalorieRange
     var confidence: Double
@@ -155,6 +156,59 @@ enum FoodPhotoImageProcessor {
     }
 }
 
+enum FoodPhotoHistoryStore {
+    private static let folderName = "FoodPhotoAnalysisHistory"
+
+    static func saveOriginalImage(data: Data?, image: UIImage, id: UUID) throws -> String {
+        let directory = try historyDirectory()
+        let filename = "\(id.uuidString).image"
+        let url = directory.appendingPathComponent(filename, isDirectory: false)
+        let output = data ?? image.jpegData(compressionQuality: 0.95)
+        guard let output, UIImage(data: output) != nil else {
+            throw DeepSeekAnalysisError.imageProcessing
+        }
+        try output.write(to: url, options: [.atomic, .completeFileProtection])
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutableURL = url
+        try? mutableURL.setResourceValues(values)
+        return filename
+    }
+
+    static func image(filename: String) -> UIImage? {
+        guard let directory = try? historyDirectory(create: false) else { return nil }
+        return UIImage(contentsOfFile: directory.appendingPathComponent(filename).path)
+    }
+
+    static func deleteImage(filename: String) {
+        guard let directory = try? historyDirectory(create: false) else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(filename))
+    }
+
+    static func clear() {
+        guard let directory = try? historyDirectory(create: false) else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private static func historyDirectory(create: Bool = true) throws -> URL {
+        let base = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: create
+        )
+        let directory = base.appendingPathComponent(folderName, isDirectory: true)
+        if create, !FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            var mutableURL = directory
+            try? mutableURL.setResourceValues(values)
+        }
+        return directory
+    }
+}
+
 struct DeepSeekVisionService {
     // DeepSeek currently marks this vision model as experimental. Keep it centralized for painless replacement.
     static let model = "deepseek-v4-flash-vision-exp"
@@ -255,7 +309,7 @@ struct DeepSeekVisionService {
     }
 
     private static let prompt = """
-    分析照片中的食物、饮品、包装或营养成分表并估算热量。只统计可食用内容；营养表清晰可读时以印刷数据为准。换算使用 1 kcal = 4.184 kJ，避免重复统计包装与其内容。逐项给出名称、类别、估计数量、单位、热量、估算依据和 0 到 1 的置信度；总热量应与分项之和一致，并给出合理区间。看不清或份量不确定时明确写入 assumptions，requiresUserConfirmation 设为 true。不要做医疗判断，不要给出虚假精度。
+    分析照片中的食物、饮品、包装或营养成分表并估算热量。给整份内容生成一个简短、适合保存到食材库的 overallName。只统计可食用内容；营养表清晰可读时以印刷数据为准。换算使用 1 kcal = 4.184 kJ，避免重复统计包装与其内容。逐项给出名称、类别、估计数量、单位、热量、估算依据和 0 到 1 的置信度；总热量应与分项之和一致，并给出合理区间。看不清或份量不确定时明确写入 assumptions，requiresUserConfirmation 设为 true。不要做医疗判断，不要给出虚假精度。
     """
 
     private static let number: [String: Any] = ["type": "number"]
@@ -263,9 +317,10 @@ struct DeepSeekVisionService {
     private static let schema: [String: Any] = [
         "type": "object",
         "additionalProperties": false,
-        "required": ["sceneType", "totalCalories", "calorieRange", "confidence", "items", "assumptions", "requiresUserConfirmation"],
+        "required": ["sceneType", "overallName", "totalCalories", "calorieRange", "confidence", "items", "assumptions", "requiresUserConfirmation"],
         "properties": [
             "sceneType": ["type": "string", "enum": ["plated_meal", "drink", "nutrition_label", "packaged_food", "unknown"]],
+            "overallName": string,
             "totalCalories": number,
             "calorieRange": [
                 "type": "object", "additionalProperties": false,

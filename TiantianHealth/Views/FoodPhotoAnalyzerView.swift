@@ -8,15 +8,21 @@ struct FoodPhotoAnalyzerView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var router: AppRouter
     @Query private var presets: [FoodPreset]
+    @Query(sort: \FoodPhotoAnalysisRecord.createdAt, order: .reverse) private var history: [FoodPhotoAnalysisRecord]
     @State private var hasKey = DeepSeekCredentialStore.hasKey
     @State private var apiKey = ""
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var image: UIImage?
+    @State private var originalImageData: Data?
     @State private var analysis: FoodPhotoAnalysis?
     @State private var items: [EditableFoodAnalysisItem] = []
+    @State private var overallName = ""
+    @State private var currentHistoryID: UUID?
     @State private var meal = FoodPhotoAnalyzerView.suggestedMeal
     @State private var showingCamera = false
     @State private var showingKeySettings = false
+    @State private var showingHistory = false
+    @State private var showingSaveOptions = false
     @State private var editingItem: EditableFoodAnalysisItem?
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -24,7 +30,8 @@ struct FoodPhotoAnalyzerView: View {
     @State private var feedback = 0
     @State private var showingDuplicateResolution = false
     @State private var duplicateConflicts: [FoodAnalysisDuplicateConflict] = []
-    @State private var pendingSaveAction: FoodAnalysisSaveAction?
+    @State private var pendingSaveRequest: FoodAnalysisSaveRequest?
+    @State private var pendingSaveItems: [EditableFoodAnalysisItem] = []
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-photo-analysis") {
@@ -32,6 +39,7 @@ struct FoodPhotoAnalyzerView: View {
             _hasKey = State(initialValue: true)
             _analysis = State(initialValue: fixture)
             _items = State(initialValue: fixture.items.map(EditableFoodAnalysisItem.init))
+            _overallName = State(initialValue: fixture.overallName)
         }
     }
 
@@ -41,10 +49,10 @@ struct FoodPhotoAnalyzerView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if !hasKey {
+                if !hasKey, analysis == nil {
                     keySetupCard
                 } else {
-                    sourceCard
+                    if hasKey { sourceCard }
                     if let image { previewCard(image) }
                     if let analysis { resultCard(analysis) }
                 }
@@ -54,7 +62,7 @@ struct FoodPhotoAnalyzerView: View {
         }
         .appScreenBackground()
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if analysis != nil, hasKey {
+            if analysis != nil {
                 resultActionBar
             }
         }
@@ -62,8 +70,11 @@ struct FoodPhotoAnalyzerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            if hasKey {
-                ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { showingHistory = true } label: { Image(systemName: "clock.arrow.circlepath") }
+                    .accessibilityLabel("分析历史")
+                    .accessibilityIdentifier("photo-analysis-history")
+                if hasKey {
                     Button { showingKeySettings = true } label: { Image(systemName: "key.fill") }
                         .accessibilityLabel("API Key 设置")
                 }
@@ -72,8 +83,11 @@ struct FoodPhotoAnalyzerView: View {
         .sheet(isPresented: $showingCamera) {
             CameraPicker { captured in
                 image = captured
+                originalImageData = captured.jpegData(compressionQuality: 0.95)
                 analysis = nil
                 items = []
+                overallName = ""
+                currentHistoryID = nil
             }
             .ignoresSafeArea()
         }
@@ -83,23 +97,51 @@ struct FoodPhotoAnalyzerView: View {
                 if !hasKey {
                     selectedPhoto = nil
                     image = nil
+                    originalImageData = nil
                     analysis = nil
                     items = []
+                    overallName = ""
+                    currentHistoryID = nil
                 }
             }
             .presentationDetents([.large])
         }
         .sheet(item: $editingItem) { value in
             FoodAnalysisItemEditor(item: value) { updated in
-                if let index = items.firstIndex(where: { $0.id == updated.id }) { items[index] = updated }
+                if let index = items.firstIndex(where: { $0.id == updated.id }) {
+                    items[index] = updated
+                    updateCurrentHistory()
+                }
             }
             .presentationDetents([.large])
         }
         .sheet(isPresented: $showingDuplicateResolution, onDismiss: clearPendingDuplicateResolution) {
             DuplicateFoodResolutionSheet(conflicts: duplicateConflicts) { choices in
-                guard let action = pendingSaveAction else { return }
+                guard let request = pendingSaveRequest else { return }
                 showingDuplicateResolution = false
-                saveSelected(action: action, duplicateChoices: choices)
+                save(items: pendingSaveItems, request: request, duplicateChoices: choices)
+            }
+            .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showingSaveOptions) {
+            FoodAnalysisSaveSheet(
+                selectedCount: selectedItems.count,
+                selectedCalories: selectedCalories,
+                suggestedName: overallName,
+                suggestedMeal: meal
+            ) { request in
+                meal = request.meal
+                overallName = request.wholeName
+                updateCurrentHistory()
+                showingSaveOptions = false
+                beginSave(request)
+            }
+            .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showingHistory) {
+            FoodPhotoAnalysisHistoryView { record in
+                loadHistory(record)
+                showingHistory = false
             }
             .presentationDetents([.large])
         }
@@ -256,22 +298,10 @@ struct FoodPhotoAnalyzerView: View {
     }
 
     private var resultActionBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Text("记录餐次")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AppTheme.secondaryText)
-                Picker("记录餐次", selection: $meal) {
-                    ForEach(MealType.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("photo-analysis-meal-picker")
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { resultActionButtons }
-                VStack(spacing: 9) { resultActionButtons }
-            }
-        }
+        Button("保存分析结果") { showingSaveOptions = true }
+            .buttonStyle(BrandButtonStyle())
+            .disabled(selectedItems.isEmpty)
+            .accessibilityIdentifier("photo-save-result")
         .padding(.horizontal, 18)
         .padding(.top, 12)
         .padding(.bottom, 10)
@@ -279,23 +309,17 @@ struct FoodPhotoAnalyzerView: View {
         .overlay(alignment: .top) { Rectangle().fill(AppTheme.divider).frame(height: 1) }
     }
 
-    @ViewBuilder private var resultActionButtons: some View {
-        Button("加入食材库") { beginSave(.libraryOnly) }
-            .buttonStyle(BrandButtonStyle(isSecondary: true))
-            .disabled(selectedItems.isEmpty)
-            .accessibilityIdentifier("photo-save-library")
-        Button("加入食材库并记录") { beginSave(.libraryAndRecord) }
-            .buttonStyle(BrandButtonStyle())
-            .disabled(selectedItems.isEmpty)
-            .accessibilityIdentifier("photo-save-and-log")
-    }
-
     @MainActor private func load(_ item: PhotosPickerItem) async {
         do {
             guard let data = try await item.loadTransferable(type: Data.self), let loaded = UIImage(data: data) else {
                 throw DeepSeekAnalysisError.imageProcessing
             }
-            image = loaded; analysis = nil; items = []
+            image = loaded
+            originalImageData = data
+            analysis = nil
+            items = []
+            overallName = ""
+            currentHistoryID = nil
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -308,11 +332,27 @@ struct FoodPhotoAnalyzerView: View {
             let result = try await DeepSeekVisionService().analyze(imageData: data, apiKey: key)
             analysis = result
             items = result.items.map(EditableFoodAnalysisItem.init)
+            overallName = result.overallName
+            try persistHistory(result: result, image: image)
         } catch { errorMessage = error.localizedDescription }
     }
 
-    private func beginSave(_ action: FoodAnalysisSaveAction) {
-        let conflicts = selectedItems.compactMap { item -> FoodAnalysisDuplicateConflict? in
+    private func beginSave(_ request: FoodAnalysisSaveRequest) {
+        let itemsToSave: [EditableFoodAnalysisItem]
+        switch request.grouping {
+        case .separate:
+            itemsToSave = selectedItems
+        case .whole:
+            itemsToSave = [EditableFoodAnalysisItem(
+                name: request.wholeName,
+                category: "整份",
+                amount: 1,
+                unit: FoodUnit.serving.rawValue,
+                calories: selectedCalories,
+                basis: selectedItems.map(\.name).joined(separator: "、")
+            )]
+        }
+        let conflicts = itemsToSave.compactMap { item -> FoodAnalysisDuplicateConflict? in
             guard let preset = FoodAnalysisLibraryPlanner.preferredDuplicate(for: item, in: presets) else { return nil }
             return FoodAnalysisDuplicateConflict(
                 itemID: item.id,
@@ -324,23 +364,25 @@ struct FoodPhotoAnalyzerView: View {
             )
         }
         guard !conflicts.isEmpty else {
-            saveSelected(action: action, duplicateChoices: [:])
+            save(items: itemsToSave, request: request, duplicateChoices: [:])
             return
         }
-        pendingSaveAction = action
+        pendingSaveRequest = request
+        pendingSaveItems = itemsToSave
         duplicateConflicts = conflicts
         showingDuplicateResolution = true
     }
 
-    private func saveSelected(
-        action: FoodAnalysisSaveAction,
+    private func save(
+        items: [EditableFoodAnalysisItem],
+        request: FoodAnalysisSaveRequest,
         duplicateChoices: [UUID: FoodAnalysisDuplicateChoice]
     ) {
         let now = Date.now
         var added = 0
         var reused = 0
 
-        for item in selectedItems {
+        for item in items {
             let duplicate = FoodAnalysisLibraryPlanner.preferredDuplicate(for: item, in: presets)
             let shouldReuse = duplicate != nil && duplicateChoices[item.id, default: .useExisting] == .useExisting
             let preset: FoodPreset
@@ -353,10 +395,10 @@ struct FoodPhotoAnalyzerView: View {
                 added += 1
             }
 
-            guard action == .libraryAndRecord else { continue }
+            guard request.action == .libraryAndRecord else { continue }
             modelContext.insert(FoodLogEntry(
                 date: now,
-                meal: meal,
+                meal: request.meal,
                 presetID: preset.id,
                 name: preset.name,
                 quantity: 1,
@@ -370,7 +412,7 @@ struct FoodPhotoAnalyzerView: View {
             try modelContext.save()
             feedback += 1
             clearPendingDuplicateResolution()
-            if action == .libraryAndRecord {
+            if request.action == .libraryAndRecord {
                 dismiss()
                 router.selectedTab = .today
             } else {
@@ -380,13 +422,94 @@ struct FoodPhotoAnalyzerView: View {
         } catch {
             modelContext.rollback()
             clearPendingDuplicateResolution()
-            errorMessage = action == .libraryAndRecord ? "食材和饮食记录没有保存成功，请重试。" : "食材没有保存成功，请重试。"
+            errorMessage = request.action == .libraryAndRecord ? "食材和饮食记录没有保存成功，请重试。" : "食材没有保存成功，请重试。"
         }
     }
 
     private func clearPendingDuplicateResolution() {
-        pendingSaveAction = nil
+        pendingSaveRequest = nil
+        pendingSaveItems = []
         duplicateConflicts = []
+    }
+
+    private func analysisSnapshot() -> FoodPhotoAnalysis? {
+        guard let analysis else { return nil }
+        let updatedItems = items.map {
+            FoodPhotoAnalysis.Item(
+                id: $0.sourceID,
+                name: $0.name,
+                category: $0.category,
+                estimatedAmount: $0.amount,
+                unit: $0.unit,
+                calories: $0.calories,
+                basis: $0.basis,
+                confidence: $0.confidence
+            )
+        }
+        return FoodPhotoAnalysis(
+            sceneType: analysis.sceneType,
+            overallName: overallName,
+            totalCalories: updatedItems.reduce(0) { $0 + $1.calories },
+            calorieRange: analysis.calorieRange,
+            confidence: analysis.confidence,
+            items: updatedItems,
+            assumptions: analysis.assumptions,
+            requiresUserConfirmation: analysis.requiresUserConfirmation
+        )
+    }
+
+    @MainActor private func persistHistory(result: FoodPhotoAnalysis, image: UIImage) throws {
+        if let id = currentHistoryID, let record = history.first(where: { $0.id == id }) {
+            try record.update(overallName: result.overallName, analysis: result)
+            try modelContext.save()
+            return
+        }
+
+        let id = UUID()
+        let filename = try FoodPhotoHistoryStore.saveOriginalImage(data: originalImageData, image: image, id: id)
+        do {
+            let record = try FoodPhotoAnalysisRecord(
+                id: id,
+                imageFilename: filename,
+                overallName: result.overallName,
+                analysis: result
+            )
+            modelContext.insert(record)
+            try modelContext.save()
+            currentHistoryID = id
+        } catch {
+            modelContext.rollback()
+            FoodPhotoHistoryStore.deleteImage(filename: filename)
+            throw error
+        }
+    }
+
+    private func updateCurrentHistory() {
+        guard let id = currentHistoryID,
+              let record = history.first(where: { $0.id == id }),
+              let snapshot = analysisSnapshot() else { return }
+        do {
+            try record.update(overallName: overallName, analysis: snapshot)
+            try modelContext.save()
+            analysis = snapshot
+        } catch {
+            modelContext.rollback()
+            errorMessage = "修改已保留在当前页面，但历史记录暂时无法更新。"
+        }
+    }
+
+    private func loadHistory(_ record: FoodPhotoAnalysisRecord) {
+        guard let savedAnalysis = record.analysis else {
+            errorMessage = "这条历史记录的分析结果无法读取。"
+            return
+        }
+        selectedPhoto = nil
+        image = FoodPhotoHistoryStore.image(filename: record.imageFilename)
+        originalImageData = nil
+        analysis = savedAnalysis
+        items = savedAnalysis.items.map(EditableFoodAnalysisItem.init)
+        overallName = record.overallName
+        currentHistoryID = record.id
     }
 
     private static var suggestedMeal: MealType {
@@ -400,6 +523,7 @@ struct FoodPhotoAnalyzerView: View {
 
     private static let uiTestingAnalysis = FoodPhotoAnalysis(
         sceneType: "drink",
+        overallName: "茉莉清茶套餐",
         totalCalories: 1_206,
         calorieRange: .init(minimum: 1_100, maximum: 1_300),
         confidence: 0.82,
@@ -413,6 +537,16 @@ struct FoodPhotoAnalyzerView: View {
                 calories: 6,
                 basis: "按无糖茶饮估算",
                 confidence: 0.9
+            ),
+            .init(
+                id: "ice",
+                name: "冰块",
+                category: "其他",
+                estimatedAmount: 150,
+                unit: "ml",
+                calories: 0,
+                basis: "水本身无热量",
+                confidence: 0.99
             ),
             .init(
                 id: "meal",
@@ -440,17 +574,44 @@ struct EditableFoodAnalysisItem: Identifiable {
     var calories: Double
     var basis: String
     var confidence: Double
-    var isSelected = true
+    var isSelected: Bool
 
     init(_ item: FoodPhotoAnalysis.Item) {
         sourceID = item.id; name = item.name; category = item.category; amount = item.estimatedAmount
         unit = item.unit; calories = item.calories; basis = item.basis; confidence = item.confidence
+        isSelected = Int(item.calories.rounded()) > 0
+    }
+
+    init(name: String, category: String, amount: Double, unit: String, calories: Double, basis: String) {
+        sourceID = UUID().uuidString
+        self.name = name
+        self.category = category
+        self.amount = amount
+        self.unit = unit
+        self.calories = calories
+        self.basis = basis
+        confidence = 1
+        isSelected = true
     }
 }
 
-enum FoodAnalysisSaveAction: Equatable {
+enum FoodAnalysisSaveAction: Hashable {
     case libraryOnly
     case libraryAndRecord
+}
+
+enum FoodAnalysisSaveGrouping: String, CaseIterable, Identifiable {
+    case separate = "分项保存"
+    case whole = "整份保存"
+
+    var id: String { rawValue }
+}
+
+struct FoodAnalysisSaveRequest: Equatable {
+    var grouping: FoodAnalysisSaveGrouping
+    var action: FoodAnalysisSaveAction
+    var meal: MealType
+    var wholeName: String
 }
 
 enum FoodAnalysisDuplicateChoice: String, CaseIterable, Identifiable {
@@ -500,6 +661,288 @@ enum FoodAnalysisLibraryPlanner {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: [.caseInsensitive, .widthInsensitive], locale: .current)
+    }
+}
+
+private struct FoodAnalysisSaveSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let selectedCount: Int
+    let selectedCalories: Double
+    let onConfirm: (FoodAnalysisSaveRequest) -> Void
+    @State private var grouping: FoodAnalysisSaveGrouping = .separate
+    @State private var action: FoodAnalysisSaveAction = .libraryAndRecord
+    @State private var meal: MealType
+    @State private var wholeName: String
+
+    init(
+        selectedCount: Int,
+        selectedCalories: Double,
+        suggestedName: String,
+        suggestedMeal: MealType,
+        onConfirm: @escaping (FoodAnalysisSaveRequest) -> Void
+    ) {
+        self.selectedCount = selectedCount
+        self.selectedCalories = selectedCalories
+        self.onConfirm = onConfirm
+        _meal = State(initialValue: suggestedMeal)
+        _wholeName = State(initialValue: suggestedName)
+    }
+
+    private var canSave: Bool {
+        selectedCount > 0 && (grouping == .separate || !wholeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    var body: some View {
+        BrandModalScaffold(
+            title: "保存分析结果",
+            subtitle: "按使用习惯决定保存为整份还是独立食材",
+            symbol: "square.and.arrow.down.fill"
+        ) { dismiss() } content: {
+            BrandSection("保存方式") {
+                Picker("保存方式", selection: $grouping) {
+                    ForEach(FoodAnalysisSaveGrouping.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("photo-save-grouping")
+
+                if grouping == .separate {
+                    Label("将 \(selectedCount) 个选中项目分别保存，方便下次自由组合", systemImage: "square.grid.2x2")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                } else {
+                    TextField("整份名称", text: $wholeName)
+                        .textInputAutocapitalization(.never)
+                        .padding(13)
+                        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityIdentifier("photo-whole-name")
+                    Label("合计 \(Int(selectedCalories.rounded())) kcal，保存为 1 份", systemImage: "shippingbox.fill")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+
+            BrandSection("保存到哪里") {
+                saveDestinationRow(
+                    title: "仅加入食材库",
+                    subtitle: "以后记录饮食时再选择",
+                    value: .libraryOnly,
+                    symbol: "books.vertical.fill"
+                )
+                Divider()
+                saveDestinationRow(
+                    title: "加入食材库并记录",
+                    subtitle: "同时计入今天的饮食",
+                    value: .libraryAndRecord,
+                    symbol: "fork.knife"
+                )
+            }
+
+            if action == .libraryAndRecord {
+                BrandSection("记录餐次") {
+                    Picker("记录餐次", selection: $meal) {
+                        ForEach(MealType.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("photo-analysis-meal-picker")
+                }
+            }
+        } footer: {
+            Button(action == .libraryAndRecord ? "加入食材库并记录" : "加入食材库") {
+                onConfirm(FoodAnalysisSaveRequest(
+                    grouping: grouping,
+                    action: action,
+                    meal: meal,
+                    wholeName: wholeName.trimmingCharacters(in: .whitespacesAndNewlines)
+                ))
+            }
+            .buttonStyle(BrandButtonStyle())
+            .disabled(!canSave)
+            .accessibilityIdentifier("photo-confirm-save")
+        }
+    }
+
+    private func saveDestinationRow(
+        title: String,
+        subtitle: String,
+        value: FoodAnalysisSaveAction,
+        symbol: String
+    ) -> some View {
+        Button { action = value } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(action == value ? .white : AppTheme.green)
+                    .background(action == value ? AppTheme.green : AppTheme.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                    Text(subtitle).font(.caption).foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer()
+                Image(systemName: action == value ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(action == value ? AppTheme.green : AppTheme.secondaryText.opacity(0.45))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableRowButtonStyle(cornerRadius: 12))
+        .accessibilityIdentifier(value == .libraryOnly ? "photo-destination-library" : "photo-destination-record")
+    }
+}
+
+private struct FoodPhotoAnalysisHistoryView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \FoodPhotoAnalysisRecord.createdAt, order: .reverse) private var records: [FoodPhotoAnalysisRecord]
+    let onUse: (FoodPhotoAnalysisRecord) -> Void
+    @State private var showingClearConfirmation = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if records.isEmpty {
+                    ContentUnavailableView(
+                        "还没有分析历史",
+                        systemImage: "camera.viewfinder",
+                        description: Text("成功分析照片后会自动保存在这里")
+                    )
+                } else {
+                    List {
+                        ForEach(records) { record in
+                            NavigationLink {
+                                FoodPhotoAnalysisHistoryDetailView(record: record, onUse: onUse)
+                            } label: {
+                                historyRow(record)
+                            }
+                            .swipeActions {
+                                Button("删除", role: .destructive) { delete(record) }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .appScreenBackground()
+            .navigationTitle("分析历史")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("关闭") { dismiss() } }
+                if !records.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("清空", role: .destructive) { showingClearConfirmation = true }
+                    }
+                }
+            }
+        }
+        .confirmationDialog("清空全部分析历史？", isPresented: $showingClearConfirmation, titleVisibility: .visible) {
+            Button("清空全部历史", role: .destructive) { clearAll() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("原始图片和分析结果都会删除，食材库与饮食记录不受影响。")
+        }
+        .alert("无法完成", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("知道了", role: .cancel) {}
+        } message: { Text(errorMessage ?? "") }
+    }
+
+    private func historyRow(_ record: FoodPhotoAnalysisRecord) -> some View {
+        HStack(spacing: 13) {
+            Group {
+                if let image = FoodPhotoHistoryStore.image(filename: record.imageFilename) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Image(systemName: "photo").foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+            .frame(width: 62, height: 62)
+            .background(AppTheme.softSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(record.overallName).font(.headline).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
+                Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
+            }
+            Spacer()
+            Text("\(Int(record.totalCalories.rounded())) kcal")
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundStyle(AppTheme.deepGreen)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func delete(_ record: FoodPhotoAnalysisRecord) {
+        let filename = record.imageFilename
+        modelContext.delete(record)
+        do {
+            try modelContext.save()
+            FoodPhotoHistoryStore.deleteImage(filename: filename)
+        } catch {
+            modelContext.rollback()
+            errorMessage = "历史记录没有删除成功，请重试。"
+        }
+    }
+
+    private func clearAll() {
+        records.forEach(modelContext.delete)
+        do {
+            try modelContext.save()
+            FoodPhotoHistoryStore.clear()
+        } catch {
+            modelContext.rollback()
+            errorMessage = "历史记录没有清空成功，请重试。"
+        }
+    }
+}
+
+private struct FoodPhotoAnalysisHistoryDetailView: View {
+    let record: FoodPhotoAnalysisRecord
+    let onUse: (FoodPhotoAnalysisRecord) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if let image = FoodPhotoHistoryStore.image(filename: record.imageFilename) {
+                    Image(uiImage: image)
+                        .resizable().scaledToFit()
+                        .frame(maxHeight: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                if let analysis = record.analysis {
+                    HealthCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(record.overallName).font(.title3.bold())
+                            Text("\(Int(record.totalCalories.rounded())) kcal")
+                                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(AppTheme.deepGreen)
+                            Divider()
+                            ForEach(analysis.items) { item in
+                                HStack(alignment: .firstTextBaseline) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.name).font(.subheadline.weight(.semibold))
+                                        Text("\(item.estimatedAmount.cleanString) \(item.unit)")
+                                            .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                                    }
+                                    Spacer()
+                                    Text("\(Int(item.calories.rounded())) kcal")
+                                        .font(.subheadline.bold().monospacedDigit())
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(18)
+        }
+        .appScreenBackground()
+        .navigationTitle("历史详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            Button("使用这次分析结果") { onUse(record) }
+                .buttonStyle(BrandButtonStyle())
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(AppTheme.surface)
+        }
     }
 }
 

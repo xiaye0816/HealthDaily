@@ -144,6 +144,7 @@ struct TiantianHealthApp: App {
                 WeightEntry.self,
                 FoodPreset.self,
                 FoodLogEntry.self,
+                FoodPhotoAnalysisRecord.self,
                 ExerciseLogEntry.self,
                 DailyBudget.self,
                 HealthIntegrationState.self

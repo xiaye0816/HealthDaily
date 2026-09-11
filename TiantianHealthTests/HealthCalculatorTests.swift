@@ -1,4 +1,5 @@
 import XCTest
+import SwiftData
 @testable import TiantianHealth
 
 final class HealthCalculatorTests: XCTestCase {
@@ -6,6 +7,7 @@ final class HealthCalculatorTests: XCTestCase {
         let json = """
         {
           "sceneType": "plated_meal",
+          "overallName": "牛肉米饭套餐",
           "totalCalories": 520,
           "calorieRange": {"minimum": 450, "maximum": 620},
           "confidence": 0.78,
@@ -19,6 +21,7 @@ final class HealthCalculatorTests: XCTestCase {
         """
         let result = try JSONDecoder().decode(FoodPhotoAnalysis.self, from: Data(json.utf8))
         XCTAssertEqual(result.totalCalories, 520, accuracy: 0.001)
+        XCTAssertEqual(result.overallName, "牛肉米饭套餐")
         XCTAssertEqual(result.items.reduce(0) { $0 + $1.calories }, 520, accuracy: 0.001)
         XCTAssertTrue(result.requiresUserConfirmation)
     }
@@ -50,6 +53,106 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(item.isSelected ? item.calories : 0, 180, accuracy: 0.001)
         item.isSelected = false
         XCTAssertEqual(item.isSelected ? item.calories : 0, 0, accuracy: 0.001)
+    }
+
+    func testZeroCaloriePhotoAnalysisItemStartsUnselected() {
+        let source = FoodPhotoAnalysis.Item(
+            id: "ice", name: "冰块", category: "其他", estimatedAmount: 150,
+            unit: "ml", calories: 0, basis: "水本身无热量", confidence: 0.99
+        )
+        XCTAssertFalse(EditableFoodAnalysisItem(source).isSelected)
+    }
+
+    func testPhotoAnalysisHistoryRoundTripsStructuredResult() throws {
+        let analysis = FoodPhotoAnalysis(
+            sceneType: "plated_meal",
+            overallName: "鸡腿套餐",
+            totalCalories: 520,
+            calorieRange: .init(minimum: 470, maximum: 580),
+            confidence: 0.8,
+            items: [
+                .init(id: "chicken", name: "鸡腿", category: "肉类", estimatedAmount: 1, unit: "个", calories: 320, basis: "可见份量", confidence: 0.8),
+                .init(id: "rice", name: "米饭", category: "主食", estimatedAmount: 1, unit: "碗", calories: 200, basis: "约一碗", confidence: 0.8)
+            ],
+            assumptions: [],
+            requiresUserConfirmation: false
+        )
+        let record = try FoodPhotoAnalysisRecord(imageFilename: "fixture.image", overallName: analysis.overallName, analysis: analysis)
+        XCTAssertEqual(record.analysis, analysis)
+        XCTAssertEqual(record.totalCalories, 520, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testAddingPhotoHistoryModelPreservesExistingStoreData() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TiantianHealthPhotoHistoryMigration-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("health.store")
+
+        let presetID: UUID
+        let logID: UUID
+        let weightID: UUID
+        do {
+            let oldSchema = Schema([
+                UserProfile.self,
+                WorkoutBaseline.self,
+                WeightEntry.self,
+                FoodPreset.self,
+                FoodLogEntry.self,
+                ExerciseLogEntry.self,
+                DailyBudget.self,
+                HealthIntegrationState.self
+            ])
+            let oldConfiguration = ModelConfiguration(schema: oldSchema, url: storeURL)
+            let oldContainer = try ModelContainer(for: oldSchema, configurations: [oldConfiguration])
+
+            let preset = FoodPreset(name: "迁移测试食物", baseQuantity: 2, unit: .item, calories: 345)
+            let log = FoodLogEntry(
+                date: .now,
+                meal: .lunch,
+                presetID: preset.id,
+                name: preset.name,
+                quantity: 2,
+                unit: preset.unit.rawValue,
+                calories: 690
+            )
+            let weight = WeightEntry(date: .now, weightKG: 79.4)
+            presetID = preset.id
+            logID = log.id
+            weightID = weight.id
+            oldContainer.mainContext.insert(preset)
+            oldContainer.mainContext.insert(log)
+            oldContainer.mainContext.insert(weight)
+            try oldContainer.mainContext.save()
+        }
+
+        let upgradedSchema = Schema([
+            UserProfile.self,
+            WorkoutBaseline.self,
+            WeightEntry.self,
+            FoodPreset.self,
+            FoodLogEntry.self,
+            FoodPhotoAnalysisRecord.self,
+            ExerciseLogEntry.self,
+            DailyBudget.self,
+            HealthIntegrationState.self
+        ])
+        let upgradedConfiguration = ModelConfiguration(schema: upgradedSchema, url: storeURL)
+        let upgradedContainer = try ModelContainer(for: upgradedSchema, configurations: [upgradedConfiguration])
+        let presets = try upgradedContainer.mainContext.fetch(FetchDescriptor<FoodPreset>())
+        let logs = try upgradedContainer.mainContext.fetch(FetchDescriptor<FoodLogEntry>())
+        let weights = try upgradedContainer.mainContext.fetch(FetchDescriptor<WeightEntry>())
+        let histories = try upgradedContainer.mainContext.fetch(FetchDescriptor<FoodPhotoAnalysisRecord>())
+
+        XCTAssertEqual(presets.map(\.id), [presetID])
+        XCTAssertEqual(presets.first?.baseQuantity, 2)
+        XCTAssertEqual(presets.first?.calories, 345)
+        XCTAssertEqual(logs.map(\.id), [logID])
+        XCTAssertEqual(logs.first?.calories, 690)
+        XCTAssertEqual(weights.map(\.id), [weightID])
+        XCTAssertEqual(weights.first?.weightKG, 79.4)
+        XCTAssertTrue(histories.isEmpty)
     }
 
     func testDeepSeekKeyMaskKeepsOnlyPrefixAndLastFourCharacters() {
