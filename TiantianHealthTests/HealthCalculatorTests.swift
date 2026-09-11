@@ -30,6 +30,17 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(DeepSeekVisionService.firstOutputText(in: payload), "{\"ok\":true}")
     }
 
+    func testDeepSeekValidationCallsTheTargetVisionModelDirectly() throws {
+        let request = try DeepSeekVisionService().validationRequest(apiKey: "test-key")
+        XCTAssertEqual(request.url?.path, "/responses")
+        XCTAssertEqual(request.httpMethod, "POST")
+
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(object["model"] as? String, DeepSeekVisionService.model)
+        XCTAssertEqual(object["input"] as? String, "只回答 OK")
+    }
+
     func testEditableFoodAnalysisSelectionTotal() {
         let source = FoodPhotoAnalysis.Item(
             id: "drink", name: "饮料", category: "饮品", estimatedAmount: 1,

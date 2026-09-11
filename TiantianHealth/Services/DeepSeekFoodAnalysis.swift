@@ -137,15 +137,22 @@ struct DeepSeekVisionService {
     private let baseURL = URL(string: "https://api.deepseek.com")!
 
     func validate(apiKey: String) async throws {
-        var request = URLRequest(url: baseURL.appending(path: "models"))
+        _ = try await perform(validationRequest(apiKey: apiKey))
+    }
+
+    func validationRequest(apiKey: String) throws -> URLRequest {
+        var request = URLRequest(url: baseURL.appending(path: "responses"))
+        request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await perform(request)
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = object["data"] as? [[String: Any]],
-              models.contains(where: { $0["id"] as? String == Self.model }) else {
-            throw DeepSeekAnalysisError.modelUnavailable
-        }
-        _ = response
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": Self.model,
+            "thinking": ["type": "disabled"],
+            "max_output_tokens": 8,
+            "input": "只回答 OK"
+        ])
+        return request
     }
 
     func analyze(imageData: Data, apiKey: String) async throws -> FoodPhotoAnalysis {
