@@ -2,6 +2,45 @@ import XCTest
 @testable import TiantianHealth
 
 final class HealthCalculatorTests: XCTestCase {
+    func testFoodPhotoAnalysisDecodesStructuredResponse() throws {
+        let json = """
+        {
+          "sceneType": "plated_meal",
+          "totalCalories": 520,
+          "calorieRange": {"minimum": 450, "maximum": 620},
+          "confidence": 0.78,
+          "items": [
+            {"id": "rice", "name": "米饭", "category": "主食", "estimatedAmount": 200, "unit": "g", "calories": 232, "basis": "约一碗", "confidence": 0.82},
+            {"id": "beef", "name": "牛肉", "category": "肉类", "estimatedAmount": 120, "unit": "g", "calories": 288, "basis": "可见份量", "confidence": 0.74}
+          ],
+          "assumptions": ["未计餐盘"],
+          "requiresUserConfirmation": true
+        }
+        """
+        let result = try JSONDecoder().decode(FoodPhotoAnalysis.self, from: Data(json.utf8))
+        XCTAssertEqual(result.totalCalories, 520, accuracy: 0.001)
+        XCTAssertEqual(result.items.reduce(0) { $0 + $1.calories }, 520, accuracy: 0.001)
+        XCTAssertTrue(result.requiresUserConfirmation)
+    }
+
+    func testDeepSeekResponseFindsNestedOutputText() throws {
+        let payload: [String: Any] = [
+            "output": [["content": [["type": "output_text", "text": "{\"ok\":true}"]]]]
+        ]
+        XCTAssertEqual(DeepSeekVisionService.firstOutputText(in: payload), "{\"ok\":true}")
+    }
+
+    func testEditableFoodAnalysisSelectionTotal() {
+        let source = FoodPhotoAnalysis.Item(
+            id: "drink", name: "饮料", category: "饮品", estimatedAmount: 1,
+            unit: "瓶", calories: 180, basis: "营养表", confidence: 0.95
+        )
+        var item = EditableFoodAnalysisItem(source)
+        XCTAssertEqual(item.isSelected ? item.calories : 0, 180, accuracy: 0.001)
+        item.isSelected = false
+        XCTAssertEqual(item.isSelected ? item.calories : 0, 0, accuracy: 0.001)
+    }
+
     func testMifflinRestingEnergyForMale() {
         let result = HealthCalculator.restingEnergy(sex: .male, age: 30, heightCM: 180, weightKG: 80)
         XCTAssertEqual(result, 1_780, accuracy: 0.01)

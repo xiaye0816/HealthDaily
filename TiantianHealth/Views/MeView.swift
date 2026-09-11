@@ -67,6 +67,10 @@ struct MeView: View {
                         }
                     }
                     Section("工具") {
+                        NavigationLink { FoodPhotoAnalyzerView() } label: {
+                            settingsLabel("拍照查热量", symbol: "camera.viewfinder", detail: "饭菜、饮料、营养表")
+                        }
+                        .accessibilityIdentifier("food-photo-analyzer")
                         NavigationLink { CalorieConverterView() } label: {
                             settingsLabel("热量换算", symbol: "arrow.left.arrow.right", detail: "kcal ↔ kJ")
                         }
@@ -124,6 +128,7 @@ struct MeView: View {
             lastDismissedReviewWeek = ""
             didMigrateActualExerciseV1 = false
             healthKit.disconnect()
+            try? DeepSeekCredentialStore.delete()
             router.clearPendingShortcut()
             WidgetSnapshotPublisher.clear()
             withAnimation(.easeInOut(duration: 0.3)) {

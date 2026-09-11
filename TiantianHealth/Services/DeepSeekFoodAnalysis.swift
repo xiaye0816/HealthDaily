@@ -1,0 +1,261 @@
+import Foundation
+import Security
+import UIKit
+
+struct FoodPhotoAnalysis: Codable, Equatable {
+    struct CalorieRange: Codable, Equatable {
+        var minimum: Double
+        var maximum: Double
+    }
+
+    struct Item: Codable, Equatable, Identifiable {
+        var id: String
+        var name: String
+        var category: String
+        var estimatedAmount: Double
+        var unit: String
+        var calories: Double
+        var basis: String
+        var confidence: Double
+    }
+
+    var sceneType: String
+    var totalCalories: Double
+    var calorieRange: CalorieRange
+    var confidence: Double
+    var items: [Item]
+    var assumptions: [String]
+    var requiresUserConfirmation: Bool
+}
+
+enum DeepSeekCredentialStore {
+    private static let service = "com.shaoguoqing.tiantianhealth.deepseek"
+    private static let account = "api-key"
+
+    static var hasKey: Bool { (try? read())?.isEmpty == false }
+
+    static func read() throws -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            throw DeepSeekAnalysisError.credentialStorage
+        }
+        return value
+    }
+
+    static func save(_ value: String) throws {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { throw DeepSeekAnalysisError.missingKey }
+        try delete()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: Data(normalized.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
+            throw DeepSeekAnalysisError.credentialStorage
+        }
+    }
+
+    static func delete() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw DeepSeekAnalysisError.credentialStorage
+        }
+    }
+}
+
+enum DeepSeekAnalysisError: LocalizedError, Equatable {
+    case missingKey
+    case invalidKey
+    case insufficientBalance
+    case rateLimited
+    case modelUnavailable
+    case imageProcessing
+    case invalidResponse
+    case credentialStorage
+    case server(Int)
+    case network(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingKey: "请先填写 DeepSeek API Key。"
+        case .invalidKey: "API Key 无效或已失效，请重新填写。"
+        case .insufficientBalance: "DeepSeek 账户余额不足，请充值后重试。"
+        case .rateLimited: "请求较多，请稍后再试。"
+        case .modelUnavailable: "当前图片分析模型不可用，请稍后重试。"
+        case .imageProcessing: "照片处理失败，请换一张照片重试。"
+        case .invalidResponse: "没有得到可用的热量分析结果，请重试。"
+        case .credentialStorage: "API Key 未能安全保存到本机钥匙串。"
+        case let .server(code): "DeepSeek 服务暂时不可用（\(code)）。"
+        case let .network(message): "网络请求失败：\(message)"
+        }
+    }
+}
+
+enum FoodPhotoImageProcessor {
+    static func jpegData(from image: UIImage, maxEdge: CGFloat = 2_048, quality: CGFloat = 0.75) throws -> Data {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { throw DeepSeekAnalysisError.imageProcessing }
+        let scale = min(1, maxEdge / max(size.width, size.height))
+        let outputSize = CGSize(width: max(1, size.width * scale), height: max(1, size.height * scale))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let rendered = UIGraphicsImageRenderer(size: outputSize, format: format).image { _ in
+            UIColor.white.setFill()
+            UIRectFill(CGRect(origin: .zero, size: outputSize))
+            image.draw(in: CGRect(origin: .zero, size: outputSize))
+        }
+        guard let data = rendered.jpegData(compressionQuality: quality) else {
+            throw DeepSeekAnalysisError.imageProcessing
+        }
+        return data
+    }
+}
+
+struct DeepSeekVisionService {
+    // DeepSeek currently marks this vision model as experimental. Keep it centralized for painless replacement.
+    static let model = "deepseek-v4-flash-vision-exp"
+    private let baseURL = URL(string: "https://api.deepseek.com")!
+
+    func validate(apiKey: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "models"))
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await perform(request)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["data"] as? [[String: Any]],
+              models.contains(where: { $0["id"] as? String == Self.model }) else {
+            throw DeepSeekAnalysisError.modelUnavailable
+        }
+        _ = response
+    }
+
+    func analyze(imageData: Data, apiKey: String) async throws -> FoodPhotoAnalysis {
+        var request = URLRequest(url: baseURL.appending(path: "responses"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 75
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody(imageData: imageData))
+        let (data, _) = try await perform(request)
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let text = Self.firstOutputText(in: object),
+              let json = text.data(using: .utf8),
+              let result = try? JSONDecoder().decode(FoodPhotoAnalysis.self, from: json),
+              !result.items.isEmpty else {
+            throw DeepSeekAnalysisError.invalidResponse
+        }
+        return result
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw DeepSeekAnalysisError.invalidResponse }
+            switch http.statusCode {
+            case 200..<300: return (data, http)
+            case 401: throw DeepSeekAnalysisError.invalidKey
+            case 402: throw DeepSeekAnalysisError.insufficientBalance
+            case 429: throw DeepSeekAnalysisError.rateLimited
+            case 404: throw DeepSeekAnalysisError.modelUnavailable
+            default: throw DeepSeekAnalysisError.server(http.statusCode)
+            }
+        } catch let error as DeepSeekAnalysisError {
+            throw error
+        } catch {
+            throw DeepSeekAnalysisError.network(error.localizedDescription)
+        }
+    }
+
+    private func requestBody(imageData: Data) -> [String: Any] {
+        [
+            "model": Self.model,
+            "thinking": ["type": "disabled"],
+            "max_output_tokens": 2_000,
+            "input": [[
+                "role": "user",
+                "content": [
+                    ["type": "input_text", "text": Self.prompt],
+                    ["type": "input_image", "image_url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"]
+                ]
+            ]],
+            "text": [
+                "format": [
+                    "type": "json_schema",
+                    "name": "food_calorie_analysis",
+                    "schema": Self.schema
+                ]
+            ]
+        ]
+    }
+
+    static func firstOutputText(in value: Any) -> String? {
+        if let dictionary = value as? [String: Any] {
+            if dictionary["type"] as? String == "output_text", let text = dictionary["text"] as? String {
+                return text
+            }
+            for child in dictionary.values {
+                if let text = firstOutputText(in: child) { return text }
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                if let text = firstOutputText(in: child) { return text }
+            }
+        }
+        return nil
+    }
+
+    private static let prompt = """
+    分析照片中的食物、饮品、包装或营养成分表并估算热量。只统计可食用内容；营养表清晰可读时以印刷数据为准。换算使用 1 kcal = 4.184 kJ，避免重复统计包装与其内容。逐项给出名称、类别、估计数量、单位、热量、估算依据和 0 到 1 的置信度；总热量应与分项之和一致，并给出合理区间。看不清或份量不确定时明确写入 assumptions，requiresUserConfirmation 设为 true。不要做医疗判断，不要给出虚假精度。
+    """
+
+    private static let number: [String: Any] = ["type": "number"]
+    private static let string: [String: Any] = ["type": "string"]
+    private static let schema: [String: Any] = [
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sceneType", "totalCalories", "calorieRange", "confidence", "items", "assumptions", "requiresUserConfirmation"],
+        "properties": [
+            "sceneType": ["type": "string", "enum": ["plated_meal", "drink", "nutrition_label", "packaged_food", "unknown"]],
+            "totalCalories": number,
+            "calorieRange": [
+                "type": "object", "additionalProperties": false,
+                "required": ["minimum", "maximum"],
+                "properties": ["minimum": number, "maximum": number]
+            ],
+            "confidence": number,
+            "items": [
+                "type": "array",
+                "items": [
+                    "type": "object", "additionalProperties": false,
+                    "required": ["id", "name", "category", "estimatedAmount", "unit", "calories", "basis", "confidence"],
+                    "properties": [
+                        "id": string, "name": string, "category": string,
+                        "estimatedAmount": number, "unit": string, "calories": number,
+                        "basis": string, "confidence": number
+                    ]
+                ]
+            ],
+            "assumptions": ["type": "array", "items": string],
+            "requiresUserConfirmation": ["type": "boolean"]
+        ]
+    ]
+}

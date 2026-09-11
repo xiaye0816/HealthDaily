@@ -225,6 +225,17 @@ final class TiantianHealthUITests: XCTestCase {
         app.navigationBars["热量换算"].buttons["我的"].tap()
         XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 3))
 
+        let photoAnalyzer = app.buttons["food-photo-analyzer"]
+        for _ in 0..<2 where !photoAnalyzer.isHittable { app.swipeUp() }
+        XCTAssertTrue(photoAnalyzer.waitForExistence(timeout: 3))
+        photoAnalyzer.tap()
+        XCTAssertTrue(app.navigationBars["拍照查热量"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["连接 DeepSeek"].exists)
+        XCTAssertTrue(app.secureTextFields["deepseek-api-key"].exists)
+        capture("14-photo-calorie-key-setup")
+        app.navigationBars["拍照查热量"].buttons["我的"].tap()
+        XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 3))
+
         let resetButton = app.buttons["reset-all-data"]
         for _ in 0..<3 where !resetButton.isHittable { app.swipeUp() }
         XCTAssertTrue(resetButton.waitForExistence(timeout: 3))
