@@ -20,7 +20,7 @@ struct MeView: View {
     @State private var showingResetConfirmation = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $router.mePath) {
             List {
                 Section {
                     if let profile = profiles.first {
@@ -54,7 +54,7 @@ struct MeView: View {
                         }
                     }
                     Section("快捷记录") {
-                        NavigationLink { FoodLibraryView() } label: {
+                        NavigationLink(value: MeDestination.foodLibrary) {
                             settingsLabel("我的食材库", symbol: "fork.knife", detail: "\(presets.count) 项")
                         }
                     }
@@ -68,7 +68,7 @@ struct MeView: View {
                         }
                     }
                     Section("工具") {
-                        NavigationLink { FoodPhotoAnalyzerView() } label: {
+                        NavigationLink(value: MeDestination.photoAnalyzer) {
                             settingsLabel("拍照查热量", symbol: "camera.viewfinder", detail: "饭菜、饮料、营养表")
                         }
                         .accessibilityIdentifier("food-photo-analyzer")
@@ -107,6 +107,14 @@ struct MeView: View {
             }
             .appScreenBackground()
             .navigationTitle("我的")
+            .navigationDestination(for: MeDestination.self) { destination in
+                switch destination {
+                case .foodLibrary:
+                    FoodLibraryView()
+                case .photoAnalyzer:
+                    FoodPhotoAnalyzerView()
+                }
+            }
             .sheet(isPresented: $showingResetConfirmation) {
                 ResetDataConfirmationSheet(onConfirm: resetAllData)
                     .presentationDetents([.large])
@@ -517,7 +525,7 @@ struct GoalSettingsView: View {
                             Text("先完成当前体重的 5% 左右").font(.caption).foregroundStyle(AppTheme.secondaryText)
                         }
                         Spacer()
-                        Text("\(profile.weightUnit.displayValue(fromKilograms: targetKG).formatted(.number.precision(.fractionLength(1)))) \(profile.weightUnit.rawValue)")
+                        Text("\(profile.weightUnit.displayValue(fromKilograms: targetKG).formatted(.number.precision(.fractionLength(2)))) \(profile.weightUnit.rawValue)")
                             .foregroundStyle(AppTheme.deepGreen)
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(AppTheme.green)
                     }
@@ -576,7 +584,7 @@ struct GoalSettingsView: View {
                 symbol: "target",
                 initialValue: profile.weightUnit.displayValue(fromKilograms: targetKG),
                 range: displayRange,
-                step: profile.weightUnit == .kg ? 0.1 : 0.2,
+                step: profile.weightUnit == .kg ? 0.01 : 0.02,
                 unit: profile.weightUnit.rawValue
             ) { targetKG = profile.weightUnit.kilograms(fromDisplayValue: $0) }
             .presentationDetents([.large])
@@ -814,14 +822,15 @@ struct CalorieConverterView: View {
 
 struct FoodLibraryView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \FoodPreset.name) private var presets: [FoodPreset]
+    @Query private var presets: [FoodPreset]
     @State private var searchText = ""
     @State private var editingPreset: FoodPreset?
     @State private var showingNewPreset = false
     @State private var deletingPreset: FoodPreset?
 
     private var filtered: [FoodPreset] {
-        searchText.isEmpty ? presets : presets.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        let sorted = FoodPresetOrdering.sortedByCreation(presets)
+        return searchText.isEmpty ? sorted : sorted.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
     var body: some View {
@@ -843,8 +852,26 @@ struct FoodLibraryView: View {
                             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         }
                     }
-                    .swipeActions {
-                        Button("删除", role: .destructive) { deletingPreset = preset }
+                    .accessibilityIdentifier("food-library-row-\(preset.name)")
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button { deletingPreset = preset } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                        .tint(.red)
+                    }
+                    .confirmationDialog(
+                        "删除“\(preset.name)”？",
+                        isPresented: deletionBinding(for: preset),
+                        titleVisibility: .visible
+                    ) {
+                        Button("删除预设", role: .destructive) {
+                            deletePreset(preset)
+                        }
+                        Button("取消", role: .cancel) {
+                            deletingPreset = nil
+                        }
+                    } message: {
+                        Text("过去已经记录的饮食不会受到影响。")
                     }
                 }
             }
@@ -861,15 +888,23 @@ struct FoodLibraryView: View {
             FoodPresetEditorView(mode: .edit(preset))
                 .presentationDetents([.large])
         }
-        .confirmationDialog("删除“\(deletingPreset?.name ?? "")”？", isPresented: Binding(get: { deletingPreset != nil }, set: { if !$0 { deletingPreset = nil } }), titleVisibility: .visible) {
-            Button("删除预设", role: .destructive) {
-                if let deletingPreset { modelContext.delete(deletingPreset); try? modelContext.save() }
-                deletingPreset = nil
+    }
+
+    private func deletionBinding(for preset: FoodPreset) -> Binding<Bool> {
+        Binding(
+            get: { deletingPreset?.id == preset.id },
+            set: { isPresented in
+                if !isPresented, deletingPreset?.id == preset.id {
+                    deletingPreset = nil
+                }
             }
-            Button("取消", role: .cancel) { deletingPreset = nil }
-        } message: {
-            Text("过去已经记录的饮食不会受到影响。")
-        }
+        )
+    }
+
+    private func deletePreset(_ preset: FoodPreset) {
+        modelContext.delete(preset)
+        try? modelContext.save()
+        deletingPreset = nil
     }
 
     private func presetDescription(_ preset: FoodPreset) -> String {

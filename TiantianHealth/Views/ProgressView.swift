@@ -15,7 +15,7 @@ struct TrendView: View {
     @State private var editingEntry: WeightEntry?
     @State private var addingWeight = false
     @State private var deletingEntry: WeightEntry?
-    @State private var selectedWeightID: UUID?
+    @GestureState private var selectedWeightID: UUID?
     @State private var weightOperationError: String?
 
     init(referenceDate: Date = .now) {
@@ -77,7 +77,7 @@ struct TrendView: View {
     private var selectedWeightAccessibilityValue: String {
         guard let selectedWeightPoint else { return "未选择记录" }
         let weight = unit.displayValue(fromKilograms: selectedWeightPoint.rawKG)
-            .formatted(.number.precision(.fractionLength(1)))
+            .formatted(.number.precision(.fractionLength(2)))
         return "已选择 \(weight) \(unit.rawValue)，\(selectedWeightPoint.date.formatted(.dateTime.month().day()))"
     }
     private var todayCalorieStatus: HealthCalculator.CalorieDeficitDay? {
@@ -155,12 +155,12 @@ struct TrendView: View {
                     Text("目标进度").font(.headline)
                     Spacer()
                     if let profile {
-                        Text("目标 \(unit.displayValue(fromKilograms: profile.targetWeightKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+                        Text("目标 \(unit.displayValue(fromKilograms: profile.targetWeightKG).formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if let profile {
-                    Text("\(unit.displayValue(fromKilograms: latestWeight).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+                    Text("\(unit.displayValue(fromKilograms: latestWeight).formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)")
                         .font(.system(size: 36, weight: .bold, design: .rounded).monospacedDigit())
                     SwiftUI.ProgressView(value: goalProgress(profile))
                         .tint(AppTheme.green)
@@ -294,7 +294,7 @@ struct TrendView: View {
 
     private func weightAnnotation(for point: WeightPoint) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(unit.displayValue(fromKilograms: point.rawKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+            Text("\(unit.displayValue(fromKilograms: point.rawKG).formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)")
                 .font(.subheadline.bold().monospacedDigit())
             Text(point.date.formatted(.dateTime.month().day().weekday(.abbreviated)))
                 .font(.caption2)
@@ -312,7 +312,7 @@ struct TrendView: View {
     }
 
     private func referenceLineLabel(_ title: String, kilograms: Double, color: Color) -> some View {
-        Text("\(title) \(unit.displayValue(fromKilograms: kilograms).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+        Text("\(title) \(unit.displayValue(fromKilograms: kilograms).formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)")
             .font(.caption2.weight(.semibold).monospacedDigit())
             .foregroundStyle(color)
             .padding(.horizontal, 7)
@@ -330,7 +330,7 @@ struct TrendView: View {
     private func weightInspectionGesture(proxy: ChartProxy, geometry: GeometryProxy) -> some Gesture {
         LongPressGesture(minimumDuration: 0.12, maximumDistance: 12)
             .sequenced(before: DragGesture(minimumDistance: 0))
-            .onChanged { value in
+            .updating($selectedWeightID) { value, selectedWeightID, _ in
                 guard case let .second(true, drag?) = value,
                       let plotFrame = proxy.plotFrame else { return }
                 let plotRect = geometry[plotFrame]
@@ -425,7 +425,7 @@ struct TrendView: View {
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text("\(unit.displayValue(fromKilograms: measurement.weightKG).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+                                    Text("\(unit.displayValue(fromKilograms: measurement.weightKG).formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)")
                                         .font(.headline.monospacedDigit()).foregroundStyle(AppTheme.textPrimary)
                                     if let id = measurement.localEntryID, let entry = weights.first(where: { $0.id == id }) {
                                         Button(role: .destructive) { deletingEntry = entry } label: {
@@ -460,7 +460,7 @@ struct TrendView: View {
 
     private func goalMessage(_ profile: UserProfile) -> String {
         let remaining = max(0, latestWeight - profile.targetWeightKG)
-        return remaining == 0 ? "已经到达目标范围" : "距离目标还有 \(unit.displayValue(fromKilograms: remaining).formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)"
+        return remaining == 0 ? "已经到达目标范围" : "距离目标还有 \(unit.displayValue(fromKilograms: remaining).formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)"
     }
 
     private func expenditureRow(_ title: String, _ value: Double) -> some View {

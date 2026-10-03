@@ -5,6 +5,7 @@ struct FoodPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query private var presets: [FoodPreset]
+    @Query private var foodLogs: [FoodLogEntry]
 
     let date: Date
     @State private var meal: MealType
@@ -22,7 +23,11 @@ struct FoodPickerView: View {
     }
 
     private var filteredPresets: [FoodPreset] {
-        let ordered = FoodPresetOrdering.sortedByRecentUse(presets)
+        let ordered = FoodPresetOrdering.sortedForMeal(
+            presets,
+            foodLogs: foodLogs,
+            meal: meal
+        )
         guard !searchText.isEmpty else { return ordered }
         return ordered.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
@@ -65,7 +70,7 @@ struct FoodPickerView: View {
                         EmptyStateView(symbol: "fork.knife.circle", title: "建立你的常用食材库", message: "不用搜索庞大数据库。把常吃的食材或菜品保存下来，下次一秒录入。")
                             .padding(.top, 34)
                     } else {
-                        Text(searchText.isEmpty ? "最近与常用" : "搜索结果")
+                        Text(searchText.isEmpty ? "适合\(meal.rawValue) · 最近常用" : "搜索结果")
                             .font(.headline).padding(.horizontal, 4)
                         ForEach(filteredPresets) { preset in
                             presetRow(preset)

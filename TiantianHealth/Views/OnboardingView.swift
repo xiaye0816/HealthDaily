@@ -143,7 +143,7 @@ struct OnboardingView: View {
                         }
                         selectionRow(
                             "当前体重",
-                            value: "\(currentWeightDisplay.formatted(.number.precision(.fractionLength(1)))) \(weightUnit.rawValue)",
+                            value: "\(currentWeightDisplay.formatted(.number.precision(.fractionLength(2)))) \(weightUnit.rawValue)",
                             detail: "滚动选择"
                         ) {
                             activePicker = .currentWeight
@@ -214,7 +214,7 @@ struct OnboardingView: View {
                     VStack(spacing: 20) {
                         selectionRow(
                             "阶段目标",
-                            value: "\(targetWeightDisplay.formatted(.number.precision(.fractionLength(1)))) \(weightUnit.rawValue)",
+                            value: "\(targetWeightDisplay.formatted(.number.precision(.fractionLength(2)))) \(weightUnit.rawValue)",
                             detail: "默认先减当前体重的 5%"
                         ) {
                             activePicker = .targetWeight
@@ -453,11 +453,11 @@ struct OnboardingView: View {
         case .currentWeight:
             MeasurementPickerSheet(
                 title: "选择当前体重",
-                subtitle: "可以精确到 \(weightUnit == .kg ? "0.1 kg" : "0.2 斤")",
+                subtitle: "可以精确到 \(weightUnit == .kg ? "0.01 kg" : "0.02 斤")",
                 symbol: "scalemass.fill",
                 initialValue: currentWeightDisplay,
                 range: weightUnit == .kg ? 30...250 : 60...500,
-                step: weightUnit == .kg ? 0.1 : 0.2,
+                step: weightUnit == .kg ? 0.01 : 0.02,
                 unit: weightUnit.rawValue
             ) { displayValue in
                 currentWeightKG = weightUnit.kilograms(fromDisplayValue: displayValue)
@@ -474,7 +474,7 @@ struct OnboardingView: View {
                 symbol: "target",
                 initialValue: targetWeightDisplay,
                 range: displayRange,
-                step: weightUnit == .kg ? 0.1 : 0.2,
+                step: weightUnit == .kg ? 0.01 : 0.02,
                 unit: weightUnit.rawValue
             ) { displayValue in
                 targetWeightKG = weightUnit.kilograms(fromDisplayValue: displayValue)

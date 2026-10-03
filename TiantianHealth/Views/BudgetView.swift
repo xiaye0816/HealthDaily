@@ -17,16 +17,34 @@ struct BudgetView: View {
 
     private var weekDays: [Date] { DateTools.weekDays(containing: today) }
     private var profile: UserProfile? { profiles.first }
-    private var latestWeightKG: Double {
-        let latestLocal = weights.max { ($0.measuredAt ?? $0.date) < ($1.measuredAt ?? $1.date) }
-        let latestHealth = healthKit.healthWeights.max { $0.measuredAt < $1.measuredAt }
-        switch (latestLocal, latestHealth) {
-        case let (local?, health?):
-            return (local.measuredAt ?? local.date) >= health.measuredAt ? local.weightKG : health.weightKG
-        case let (local?, nil): return local.weightKG
-        case let (nil, health?): return health.weightKG
-        case (nil, nil): return profile?.initialWeightKG ?? 0
+    private var weightUnit: WeightUnit { profile?.weightUnit ?? .kg }
+    private var weightMeasurements: [WeightMeasurement] {
+        let local = weights.map {
+            WeightMeasurement(
+                id: $0.id,
+                date: DateTools.day($0.date),
+                measuredAt: $0.measuredAt ?? $0.date,
+                weightKG: $0.weightKG,
+                source: .local,
+                localEntryID: $0.id
+            )
         }
+        let localSyncIDs = Set(weights.compactMap(\.healthSyncIdentifier))
+        let health = healthKit.healthWeights.compactMap { sample -> WeightMeasurement? in
+            if let syncIdentifier = sample.syncIdentifier, localSyncIDs.contains(syncIdentifier) { return nil }
+            return WeightMeasurement(
+                id: sample.id,
+                date: DateTools.day(sample.measuredAt),
+                measuredAt: sample.measuredAt,
+                weightKG: sample.weightKG,
+                source: .appleHealth,
+                localEntryID: nil
+            )
+        }
+        return HealthCalculator.latestWeightMeasurementsPerDay(local + health)
+    }
+    private var latestWeightKG: Double {
+        weightMeasurements.last?.weightKG ?? profile?.initialWeightKG ?? 0
     }
     private var calorieDays: [HealthCalculator.CalorieDeficitDay] {
         guard let profile else { return [] }
@@ -44,6 +62,33 @@ struct BudgetView: View {
     }
     private var summary: HealthCalculator.CalorieDeficitSummary {
         HealthCalculator.calorieDeficitSummary(days: calorieDays)
+    }
+    private var weeklyWeightProgress: HealthCalculator.WeeklyWeightProgress? {
+        guard let weekStart = weekDays.first else { return nil }
+        return HealthCalculator.weeklyWeightProgress(
+            measurements: weightMeasurements,
+            weekStart: weekStart,
+            referenceDate: today.addingTimeInterval(24 * 60 * 60 - 1)
+        )
+    }
+    private var effectiveDailyTargetDeficit: Double {
+        if let todayStatus = calorieDays.first(where: { DateTools.isSameDay($0.date, today) }) {
+            return todayStatus.targetDeficit
+        }
+        guard let profile else { return 0 }
+        return min(
+            profile.dailyDeficitTarget(weightKG: latestWeightKG),
+            max(0, profile.calibratedTDEE - HealthCalculator.minimumDailyCalories(for: profile.sex))
+        )
+    }
+    private var goalArrivalEstimate: HealthCalculator.GoalArrivalEstimate? {
+        guard let profile else { return nil }
+        return HealthCalculator.goalArrivalEstimate(
+            currentWeightKG: latestWeightKG,
+            targetWeightKG: profile.targetWeightKG,
+            dailyDeficit: effectiveDailyTargetDeficit,
+            referenceDate: today
+        )
     }
     private var incompletePastDayCount: Int {
         calorieDays.filter { $0.phase == .past }.count - summary.completedPastDayCount
@@ -97,6 +142,7 @@ struct BudgetView: View {
                     total: max(summary.targetDeficit, 1)
                 )
                 .tint(summary.currentDeficit >= 0 ? AppTheme.green : AppTheme.orange)
+                weightProgressSummary
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
                     summaryMetric("本周已摄入", summary.consumed)
                     summaryMetric(summary.weeklyRemainingIntake >= 0 ? "本周还可摄入" : "本周超出目标摄入", abs(summary.weeklyRemainingIntake))
@@ -105,6 +151,144 @@ struct BudgetView: View {
                 targetDeviationRow
             }
         }
+    }
+
+    private var weeklyFatEquivalentLabel: String {
+        summary.currentDeficit < 0 ? "理论增脂风险" : "理论脂肪等量"
+    }
+
+    private var weeklyFatEquivalentValue: String {
+        let kilograms = HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: abs(summary.currentDeficit))
+        let value = weightUnit.displayValue(fromKilograms: kilograms)
+            .formatted(.number.precision(.fractionLength(2)))
+        return "≈ \(value) \(weightUnit.rawValue)"
+    }
+
+    private var weightProgressSummary: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .top, spacing: 12) {
+                comparisonMetric(
+                    title: weeklyFatEquivalentLabel,
+                    value: weeklyFatEquivalentValue,
+                    color: summary.currentDeficit < 0 ? AppTheme.orange : AppTheme.deepGreen,
+                    identifier: "weekly-fat-equivalent"
+                )
+                Divider().overlay(AppTheme.divider)
+                comparisonMetric(
+                    title: weightProgressTitle,
+                    value: weightProgressValue,
+                    color: weightProgressColor,
+                    identifier: "weekly-weight-change"
+                )
+            }
+            if let progress = weeklyWeightProgress {
+                Text(weightProgressDetail(progress))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .lineLimit(2)
+            } else {
+                Text("本周还没有体重记录")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+            Divider().overlay(AppTheme.divider)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("预计达成目标")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                    Text(goalArrivalDetail)
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer(minLength: 8)
+                Text(goalArrivalValue)
+                    .font(.subheadline.bold().monospacedDigit())
+                    .foregroundStyle(goalArrivalColor)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .accessibilityIdentifier("goal-arrival-estimate")
+            }
+        }
+        .padding(13)
+        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func comparisonMetric(title: String, value: String, color: Color, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            Text(value)
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .accessibilityIdentifier(identifier)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var weightProgressTitle: String {
+        switch weeklyWeightProgress?.context {
+        case .previousDay: "较昨日变化"
+        case .currentWeek: "本周体重变化"
+        case .weekStart: "本周起始体重"
+        case nil: "本周体重"
+        }
+    }
+
+    private var weightProgressValue: String {
+        guard let progress = weeklyWeightProgress else { return "暂无数据" }
+        if progress.context == .weekStart {
+            let displayed = weightUnit.displayValue(fromKilograms: progress.baselineWeightKG)
+                .formatted(.number.precision(.fractionLength(2)))
+            return "\(displayed) \(weightUnit.rawValue)"
+        }
+        let displayed = weightUnit.displayValue(fromKilograms: abs(progress.changeKG))
+            .formatted(.number.precision(.fractionLength(2)))
+        if abs(progress.changeKG) < 0.005 { return "持平 \(displayed) \(weightUnit.rawValue)" }
+        return "\(progress.changeKG < 0 ? "↓" : "↑") \(displayed) \(weightUnit.rawValue)"
+    }
+
+    private var weightProgressColor: Color {
+        guard let progress = weeklyWeightProgress,
+              progress.context != .weekStart,
+              let profile else { return AppTheme.secondaryText }
+        if abs(progress.changeKG) < 0.005 { return AppTheme.secondaryText }
+        let targetDirection = profile.targetWeightKG - progress.baselineWeightKG
+        return progress.changeKG * targetDirection > 0 ? AppTheme.deepGreen : AppTheme.orange
+    }
+
+    private func weightProgressDetail(_ progress: HealthCalculator.WeeklyWeightProgress) -> String {
+        if progress.context == .weekStart {
+            return "记录下一个不同日期的体重后显示本周变化"
+        }
+        let baseline = weightUnit.displayValue(fromKilograms: progress.baselineWeightKG)
+            .formatted(.number.precision(.fractionLength(2)))
+        let latest = weightUnit.displayValue(fromKilograms: progress.latestWeightKG)
+            .formatted(.number.precision(.fractionLength(2)))
+        return "\(progress.baselineDate.formatted(.dateTime.month().day())) \(baseline) → \(progress.latestDate.formatted(.dateTime.month().day())) \(latest) \(weightUnit.rawValue)"
+    }
+
+    private var goalArrivalValue: String {
+        guard let profile else { return "暂无法估算" }
+        if latestWeightKG <= profile.targetWeightKG { return "已达到目标" }
+        guard let estimate = goalArrivalEstimate else { return "暂无法估算" }
+        return "约 \(estimate.remainingDays) 天"
+    }
+
+    private var goalArrivalDetail: String {
+        guard let profile else { return "缺少目标信息" }
+        if latestWeightKG <= profile.targetWeightKG { return "当前体重已经达到设定目标" }
+        guard let estimate = goalArrivalEstimate else { return "当前有效目标缺口不足，无法计算日期" }
+        return "按目标缺口 \(Int(estimate.dailyDeficit.rounded())) kcal/天 · 预计 \(estimate.estimatedDate.formatted(.dateTime.month().day())) 前后"
+    }
+
+    private var goalArrivalColor: Color {
+        guard let profile else { return AppTheme.secondaryText }
+        return latestWeightKG <= profile.targetWeightKG ? AppTheme.deepGreen : (goalArrivalEstimate == nil ? AppTheme.secondaryText : AppTheme.deepGreen)
     }
 
     private var targetDeviationRow: some View {

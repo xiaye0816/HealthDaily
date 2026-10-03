@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import SwiftData
 @testable import TiantianHealth
@@ -43,6 +44,57 @@ final class HealthCalculatorTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(object["model"] as? String, DeepSeekVisionService.model)
         XCTAssertEqual(object["input"] as? String, "只回答 OK")
+        XCTAssertNil(object["thinking"])
+        XCTAssertEqual((object["reasoning"] as? [String: String])?["effort"], "none")
+    }
+
+    func testDeepSeekBalanceRequestUsesAuthenticatedGETWithoutBody() {
+        let request = DeepSeekAccountService().balanceRequest(apiKey: "balance-key")
+
+        XCTAssertEqual(request.url?.path, "/user/balance")
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer balance-key")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
+        XCTAssertNil(request.httpBody)
+        XCTAssertEqual(request.timeoutInterval, 15)
+    }
+
+    func testDeepSeekBalanceDecodesMultipleCurrencies() throws {
+        let data = Data("""
+        {
+          "is_available": true,
+          "balance_infos": [
+            {"currency":"CNY","total_balance":"110.00","granted_balance":"10.00","topped_up_balance":"100.00"},
+            {"currency":"USD","total_balance":"2.50","granted_balance":"0.50","topped_up_balance":"2.00"}
+          ]
+        }
+        """.utf8)
+
+        let result = try JSONDecoder().decode(DeepSeekAccountBalance.self, from: data)
+
+        XCTAssertTrue(result.isAvailable)
+        XCTAssertEqual(result.balanceInfos.count, 2)
+        XCTAssertEqual(result.balanceInfos[0].currency, "CNY")
+        XCTAssertEqual(result.balanceInfos[0].totalBalance, "110.00")
+        XCTAssertEqual(result.balanceInfos[1].currency, "USD")
+        XCTAssertEqual(result.balanceInfos[1].grantedBalance, "0.50")
+    }
+
+    func testDeepSeekBalanceRetriesServerFailureOnce() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DeepSeekMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        DeepSeekMockURLProtocol.reset()
+        DeepSeekMockURLProtocol.responses = [
+            (503, Data("{\"error\":{\"message\":\"busy\"}}".utf8)),
+            (200, Data("{\"is_available\":true,\"balance_infos\":[{\"currency\":\"CNY\",\"total_balance\":\"9.90\",\"granted_balance\":\"0.00\",\"topped_up_balance\":\"9.90\"}]}".utf8))
+        ]
+        let service = DeepSeekAccountService(session: session, sleep: { _ in })
+
+        let result = try await service.fetchBalance(apiKey: "test-key")
+
+        XCTAssertEqual(DeepSeekMockURLProtocol.requestCount, 2)
+        XCTAssertEqual(result.balanceInfos.first?.totalBalance, "9.90")
     }
 
     func testDeepSeekAnalysisRequestIncludesOptionalUserNote() throws {
@@ -61,6 +113,32 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertFalse(prompt.contains("  请重点"))
     }
 
+    func testDeepSeekAnalysisUsesLargeOutputBudgetAndCompactSchema() throws {
+        let request = try DeepSeekVisionService().analysisRequest(
+            imageData: Data([0x01]),
+            apiKey: "test-key",
+            userNote: nil
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(object["max_output_tokens"] as? Int, 10_000)
+        XCTAssertNil(object["thinking"])
+        XCTAssertEqual((object["reasoning"] as? [String: String])?["effort"], "none")
+
+        let text = try XCTUnwrap(object["text"] as? [String: Any])
+        let format = try XCTUnwrap(text["format"] as? [String: Any])
+        let schema = try XCTUnwrap(format["schema"] as? [String: Any])
+        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        XCTAssertNil(properties["totalCalories"])
+        XCTAssertNil(properties["confidence"])
+        let items = try XCTUnwrap(properties["items"] as? [String: Any])
+        let itemSchema = try XCTUnwrap(items["items"] as? [String: Any])
+        let itemProperties = try XCTUnwrap(itemSchema["properties"] as? [String: Any])
+        XCTAssertNil(itemProperties["id"])
+        XCTAssertNil(itemProperties["confidence"])
+        XCTAssertNotNil(itemProperties["basis"])
+    }
+
     func testDeepSeekAnalysisRequestOmitsEmptyUserNote() throws {
         let request = try DeepSeekVisionService().analysisRequest(
             imageData: Data([0x01]),
@@ -74,6 +152,176 @@ final class HealthCalculatorTests: XCTestCase {
         let prompt = try XCTUnwrap(content.first?["text"] as? String)
 
         XCTAssertFalse(prompt.contains("用户补充说明："))
+    }
+
+    func testDeepSeekLogRequestHidesImageBase64ButKeepsRequestShape() throws {
+        let image = Data([0x01, 0x02, 0x03])
+        let request = try DeepSeekVisionService().analysisRequest(
+            imageData: image,
+            apiKey: "secret-key-must-not-appear",
+            userNote: "识别整份热量"
+        )
+        let output = DeepSeekVisionService.sanitizedRequestJSON(request.httpBody, imageData: image)
+
+        XCTAssertTrue(output.contains("图片 Base64 已隐藏"))
+        XCTAssertTrue(output.contains("识别整份热量"))
+        XCTAssertTrue(output.contains(DeepSeekVisionService.model))
+        XCTAssertFalse(output.contains(image.base64EncodedString()))
+        XCTAssertFalse(output.contains("secret-key-must-not-appear"))
+    }
+
+    func testDeepSeekAPILogStoreKeepsOnlyRecentSevenDays() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeepSeekAPILogStore(rootDirectory: root)
+        let now = Date.now
+        let recent = DeepSeekAPILogRecord(
+            id: UUID(), operationID: UUID(), createdAt: now, kind: .photoAnalysis, attempt: 1,
+            model: DeepSeekVisionService.model, inputTokens: 120, outputTokens: 80, httpStatus: 200,
+            duration: 2.5, requestBytes: 100, responseBytes: 200, requestID: "recent",
+            requestJSON: "{}", responseJSON: "{}", errorMessage: nil, imageThumbnailFilename: nil
+        )
+        let expired = DeepSeekAPILogRecord(
+            id: UUID(), operationID: UUID(), createdAt: now.addingTimeInterval(-8 * 24 * 60 * 60),
+            kind: .keyValidation, attempt: 1, model: DeepSeekVisionService.model,
+            inputTokens: nil, outputTokens: nil, httpStatus: 500, duration: 1,
+            requestBytes: 10, responseBytes: 10, requestID: "expired",
+            requestJSON: "{}", responseJSON: "{}", errorMessage: "失败", imageThumbnailFilename: nil
+        )
+
+        await store.append(expired, thumbnailData: nil)
+        await store.append(recent, thumbnailData: nil)
+        let records = await store.records(now: now)
+
+        XCTAssertEqual(records.map(\.requestID), ["recent"])
+    }
+
+    func testDeepSeekAPILogStoreDeduplicatesTransferredWatchLogs() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeepSeekAPILogStore(rootDirectory: root)
+        let id = UUID()
+        let original = DeepSeekAPILogRecord(
+            id: id, operationID: UUID(), createdAt: .now, kind: .watchVoiceAnalysis, attempt: 1,
+            model: "deepseek-v4-flash", inputTokens: 10, outputTokens: 5, httpStatus: 500,
+            duration: 1, requestBytes: 20, responseBytes: 30, requestID: nil,
+            requestJSON: "{}", responseJSON: "{}", errorMessage: "失败", imageThumbnailFilename: nil
+        )
+        let deliveredAgain = DeepSeekAPILogRecord(
+            id: id, operationID: original.operationID, createdAt: original.createdAt,
+            kind: .watchVoiceAnalysis, attempt: 1, model: original.model,
+            inputTokens: 10, outputTokens: 5, httpStatus: 500, duration: 1,
+            requestBytes: 20, responseBytes: 30, requestID: "watch-request",
+            requestJSON: "{}", responseJSON: "{}", errorMessage: "失败", imageThumbnailFilename: nil
+        )
+
+        await store.append(original, thumbnailData: nil)
+        await store.append(deliveredAgain, thumbnailData: nil)
+        let records = await store.records()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.requestID, "watch-request")
+    }
+
+    func testWatchVoiceAnalysisBuildsWholeAndSeparateRecords() throws {
+        let result = WatchVoiceAnalysisResult(
+            transcript: "鸭腿饭",
+            overallName: "卤鸭腿饭",
+            totalCalories: 615,
+            items: [
+                WatchVoiceAnalysisItem(id: "duck", name: "卤鸭腿", estimatedAmount: 1, unit: "只", calories: 320),
+                WatchVoiceAnalysisItem(id: "rice", name: "米饭", estimatedAmount: 1, unit: "碗", calories: 230),
+                WatchVoiceAnalysisItem(id: "sauce", name: "卤汁", estimatedAmount: 30, unit: "克", calories: 65),
+                WatchVoiceAnalysisItem(id: "water", name: "水", estimatedAmount: 1, unit: "杯", calories: 0)
+            ],
+            assumptions: []
+        )
+        let selected: Set<String> = ["duck", "rice", "sauce"]
+
+        let whole = result.recordItems(selectedIDs: selected, grouping: .whole)
+        let separate = result.recordItems(selectedIDs: selected, grouping: .separate)
+
+        XCTAssertEqual(whole.count, 1)
+        XCTAssertEqual(whole.first?.name, "卤鸭腿饭")
+        XCTAssertEqual(whole.first?.calories, 615)
+        XCTAssertEqual(separate.map(\.name), ["卤鸭腿", "米饭", "卤汁"])
+        XCTAssertEqual(separate.reduce(0) { $0 + $1.calories }, 615)
+    }
+
+    func testWatchVoiceAnalysisDecodesLegacyResultWithoutOverallName() throws {
+        let data = Data("""
+        {"transcript":"鸭腿饭","totalCalories":320,"items":[{"id":"1","name":"鸭腿","estimatedAmount":1,"unit":"只","calories":320}],"assumptions":[]}
+        """.utf8)
+
+        let result = try JSONDecoder().decode(WatchVoiceAnalysisResult.self, from: data)
+
+        XCTAssertEqual(result.overallName, "鸭腿饭")
+    }
+
+    func testDeepSeekRetriesServerErrorOnceAndLogsBothAttempts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeepSeekAPILogStore(rootDirectory: root)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DeepSeekMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        DeepSeekMockURLProtocol.reset()
+        DeepSeekMockURLProtocol.responses = [
+            (500, Data("{\"error\":{\"message\":\"temporary\"}}".utf8)),
+            (200, Self.validDeepSeekAnalysisResponse)
+        ]
+        let service = DeepSeekVisionService(session: session, logStore: store, sleep: { _ in })
+
+        let result = try await service.analyze(imageData: Data([0x01]), apiKey: "test-key", userNote: nil)
+        let records = await store.records()
+
+        XCTAssertEqual(result.totalCalories, 120)
+        XCTAssertEqual(DeepSeekMockURLProtocol.requestCount, 2)
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(Set(records.compactMap(\.httpStatus)), Set([200, 500]))
+        XCTAssertEqual(records.first(where: { $0.httpStatus == 200 })?.inputTokens, 42)
+        XCTAssertEqual(records.first(where: { $0.httpStatus == 200 })?.outputTokens, 21)
+    }
+
+    func testDeepSeekDoesNotRetryIncompleteHTTP200AndLogsReason() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DeepSeekAPILogStore(rootDirectory: root)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DeepSeekMockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        DeepSeekMockURLProtocol.reset()
+        DeepSeekMockURLProtocol.responses = [
+            (200, Data("{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":323,\"output_tokens\":1200}}".utf8))
+        ]
+        let service = DeepSeekVisionService(session: session, logStore: store, sleep: { _ in })
+
+        do {
+            _ = try await service.analyze(imageData: Data([0x01]), apiKey: "test-key", userNote: nil)
+            XCTFail("Expected an incomplete response error")
+        } catch {
+            XCTAssertEqual(error as? DeepSeekAnalysisError, .responseIncomplete("max_output_tokens"))
+        }
+
+        let records = await store.records()
+        XCTAssertEqual(DeepSeekMockURLProtocol.requestCount, 1)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.httpStatus, 200)
+        XCTAssertEqual(records.first?.responseStatus, "incomplete")
+        XCTAssertEqual(records.first?.incompleteReason, "max_output_tokens")
+        XCTAssertFalse(records.first?.succeeded ?? true)
+    }
+
+    private static var validDeepSeekAnalysisResponse: Data {
+        let analysis = """
+        {"sceneType":"packaged_food","overallName":"饼干","totalCalories":120,"calorieRange":{"minimum":110,"maximum":130},"confidence":0.9,"items":[{"id":"1","name":"饼干","category":"零食","estimatedAmount":1,"unit":"份","calories":120,"basis":"营养表","confidence":0.9}],"assumptions":[],"requiresUserConfirmation":false}
+        """
+        let response: [String: Any] = [
+            "status": "completed",
+            "usage": ["input_tokens": 42, "output_tokens": 21],
+            "output": [["content": [["type": "output_text", "text": analysis]]]]
+        ]
+        return try! JSONSerialization.data(withJSONObject: response)
     }
 
     func testEditableFoodAnalysisSelectionTotal() {
@@ -531,6 +779,144 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertEqual(HealthCalculator.theoreticalFatEquivalentKG(calorieDeficit: 2_310), 0.3, accuracy: 0.001)
     }
 
+    func testMondayWeightProgressComparesWithPreviousDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let weekStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21)))
+        let referenceDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21, hour: 23)))
+        func measurement(day: Int, hour: Int, weight: Double, source: WeightMeasurement.Source = .local) -> WeightMeasurement {
+            let measuredAt = calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour))!
+            return WeightMeasurement(
+                id: UUID(),
+                date: calendar.startOfDay(for: measuredAt),
+                measuredAt: measuredAt,
+                weightKG: weight,
+                source: source,
+                localEntryID: source == .local ? UUID() : nil
+            )
+        }
+        let measurements = [
+            measurement(day: 20, hour: 8, weight: 79.4, source: .appleHealth),
+            measurement(day: 20, hour: 20, weight: 79.25),
+            measurement(day: 21, hour: 8, weight: 78.7)
+        ]
+
+        let result = HealthCalculator.weeklyWeightProgress(
+            measurements: measurements,
+            weekStart: weekStart,
+            referenceDate: referenceDate,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.context, .previousDay)
+        XCTAssertEqual(result?.baselineWeightKG ?? 0, 79.25, accuracy: 0.001)
+        XCTAssertEqual(result?.latestWeightKG ?? 0, 78.7, accuracy: 0.001)
+        XCTAssertEqual(result?.changeKG ?? 0, -0.55, accuracy: 0.001)
+    }
+
+    func testMondayWithoutPreviousDayUsesWeekStartingWeight() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let weekStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21)))
+        let referenceDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21, hour: 23)))
+        func measurement(day: Int, hour: Int, weight: Double) -> WeightMeasurement {
+            let measuredAt = calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour))!
+            return WeightMeasurement(
+                id: UUID(),
+                date: calendar.startOfDay(for: measuredAt),
+                measuredAt: measuredAt,
+                weightKG: weight,
+                source: .local,
+                localEntryID: UUID()
+            )
+        }
+
+        let result = HealthCalculator.weeklyWeightProgress(
+            measurements: [measurement(day: 21, hour: 8, weight: 78.7)],
+            weekStart: weekStart,
+            referenceDate: referenceDate,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.context, .weekStart)
+        XCTAssertEqual(result?.baselineWeightKG ?? 0, 78.7, accuracy: 0.001)
+    }
+
+    func testTuesdayWeightProgressUsesFirstMeasurementThisWeek() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let weekStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21)))
+        let referenceDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 22, hour: 23)))
+        func measurement(day: Int, weight: Double) -> WeightMeasurement {
+            let measuredAt = calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: 8))!
+            return WeightMeasurement(
+                id: UUID(), date: calendar.startOfDay(for: measuredAt), measuredAt: measuredAt,
+                weightKG: weight, source: .local, localEntryID: UUID()
+            )
+        }
+
+        let result = HealthCalculator.weeklyWeightProgress(
+            measurements: [
+                measurement(day: 20, weight: 79.25),
+                measurement(day: 21, weight: 78.7),
+                measurement(day: 22, weight: 78.6)
+            ],
+            weekStart: weekStart,
+            referenceDate: referenceDate,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.context, .currentWeek)
+        XCTAssertEqual(result?.baselineWeightKG ?? 0, 78.7, accuracy: 0.001)
+        XCTAssertEqual(result?.latestWeightKG ?? 0, 78.6, accuracy: 0.001)
+        XCTAssertEqual(result?.changeKG ?? 0, -0.1, accuracy: 0.001)
+    }
+
+    func testFirstMeasurementMidweekUsesWeekStartingWeightUntilAnotherDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let weekStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21)))
+        let referenceDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 23)))
+        let measuredAt = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 8)))
+        let measurement = WeightMeasurement(
+            id: UUID(), date: calendar.startOfDay(for: measuredAt), measuredAt: measuredAt,
+            weightKG: 78.5, source: .local, localEntryID: UUID()
+        )
+
+        let result = HealthCalculator.weeklyWeightProgress(
+            measurements: [measurement],
+            weekStart: weekStart,
+            referenceDate: referenceDate,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.context, .weekStart)
+        XCTAssertEqual(result?.baselineWeightKG ?? 0, 78.5, accuracy: 0.001)
+    }
+
+    func testGoalArrivalEstimateRoundsUpAndReturnsDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let referenceDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 19)))
+
+        let result = HealthCalculator.goalArrivalEstimate(
+            currentWeightKG: 78.8,
+            targetWeightKG: 77.5,
+            dailyDeficit: 425,
+            referenceDate: referenceDate,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result?.remainingWeightKG ?? 0, 1.3, accuracy: 0.001)
+        XCTAssertEqual(result?.remainingDays, 24)
+        XCTAssertEqual(result?.estimatedDate, calendar.date(byAdding: .day, value: 24, to: referenceDate))
+    }
+
+    func testGoalArrivalEstimateRequiresRemainingWeightAndEffectiveDeficit() {
+        XCTAssertNil(HealthCalculator.goalArrivalEstimate(currentWeightKG: 77.5, targetWeightKG: 77.5, dailyDeficit: 425))
+        XCTAssertNil(HealthCalculator.goalArrivalEstimate(currentWeightKG: 78.8, targetWeightKG: 77.5, dailyDeficit: 0))
+    }
+
     func testAppleHealthBaselineBlendsUntilSevenCompleteDays() {
         let start = DateTools.day(.now)
         let days = (1...3).map { offset in
@@ -928,7 +1314,7 @@ final class HealthCalculatorTests: XCTestCase {
         )
     }
 
-    func testFoodPresetsSortByActualRecentUseThenCreationTime() {
+    func testFoodPresetsSortByMostRecentCreationOrUse() {
         let now = Date.now
         let olderUsed = FoodPreset(name: "鸡蛋", baseQuantity: 1, unit: .item, calories: 75)
         olderUsed.createdAt = now.addingTimeInterval(-500)
@@ -942,7 +1328,170 @@ final class HealthCalculatorTests: XCTestCase {
         newestUnused.createdAt = now.addingTimeInterval(-10)
 
         let result = FoodPresetOrdering.sortedByRecentUse([olderUnused, olderUsed, newestUnused, newestUsed])
-        XCTAssertEqual(result.map(\.id), [newestUsed.id, olderUsed.id, newestUnused.id, olderUnused.id])
+        XCTAssertEqual(result.map(\.id), [newestUsed.id, newestUnused.id, olderUsed.id, olderUnused.id])
+    }
+
+    func testFoodPresetsSortByCreationForLibrary() {
+        let now = Date.now
+        let older = FoodPreset(name: "鸡蛋", baseQuantity: 1, unit: .item, calories: 75)
+        older.createdAt = now.addingTimeInterval(-100)
+        older.lastUsedAt = now
+        let newer = FoodPreset(name: "酸奶", baseQuantity: 1, unit: .serving, calories: 120)
+        newer.createdAt = now
+
+        let result = FoodPresetOrdering.sortedByCreation([older, newer])
+        XCTAssertEqual(result.map(\.id), [newer.id, older.id])
+    }
+
+    func testFoodRecommendationsPreferMatchingMealWhenUsageIsOtherwiseEqual() {
+        let reference = Date(timeIntervalSince1970: 2_000_000_000)
+        let breakfastFood = FoodPreset(name: "苏打饼干", baseQuantity: 1, unit: .serving, calories: 120)
+        let lunchFood = FoodPreset(name: "饭团", baseQuantity: 1, unit: .serving, calories: 200)
+        for preset in [breakfastFood, lunchFood] {
+            preset.createdAt = reference.addingTimeInterval(-30 * 86_400)
+            preset.lastUsedAt = reference
+        }
+
+        let breakfastLog = FoodLogEntry(
+            date: reference,
+            meal: .breakfast,
+            presetID: breakfastFood.id,
+            name: breakfastFood.name,
+            quantity: 1,
+            unit: breakfastFood.unit.rawValue,
+            calories: breakfastFood.calories
+        )
+        breakfastLog.createdAt = reference
+        let lunchLog = FoodLogEntry(
+            date: reference,
+            meal: .lunch,
+            presetID: lunchFood.id,
+            name: lunchFood.name,
+            quantity: 1,
+            unit: lunchFood.unit.rawValue,
+            calories: lunchFood.calories
+        )
+        lunchLog.createdAt = reference
+
+        let result = FoodPresetOrdering.sortedForMeal(
+            [lunchFood, breakfastFood],
+            foodLogs: [breakfastLog, lunchLog],
+            meal: .breakfast,
+            referenceDate: reference
+        )
+
+        XCTAssertEqual(result.map(\.id), [breakfastFood.id, lunchFood.id])
+    }
+
+    func testFoodRecommendationsAllowStrongGlobalUsageToBeatWeakMealMatch() {
+        let reference = Date(timeIntervalSince1970: 2_000_000_000)
+        let weakMealMatch = FoodPreset(name: "早餐牛奶", baseQuantity: 1, unit: .serving, calories: 120)
+        let strongGlobal = FoodPreset(name: "苏打饼干", baseQuantity: 1, unit: .serving, calories: 120)
+        for preset in [weakMealMatch, strongGlobal] {
+            preset.createdAt = reference.addingTimeInterval(-30 * 86_400)
+            preset.lastUsedAt = reference
+        }
+
+        let breakfastLog = FoodLogEntry(
+            date: reference,
+            meal: .breakfast,
+            presetID: weakMealMatch.id,
+            name: weakMealMatch.name,
+            quantity: 1,
+            unit: weakMealMatch.unit.rawValue,
+            calories: weakMealMatch.calories
+        )
+        breakfastLog.createdAt = reference
+        let globalLogs = (0..<4).map { index in
+            let log = FoodLogEntry(
+                date: reference,
+                meal: .snack,
+                presetID: strongGlobal.id,
+                name: strongGlobal.name,
+                quantity: 1,
+                unit: strongGlobal.unit.rawValue,
+                calories: strongGlobal.calories
+            )
+            log.createdAt = reference.addingTimeInterval(-Double(index) * 60)
+            return log
+        }
+
+        let result = FoodPresetOrdering.sortedForMeal(
+            [weakMealMatch, strongGlobal],
+            foodLogs: [breakfastLog] + globalLogs,
+            meal: .breakfast,
+            referenceDate: reference
+        )
+
+        XCTAssertEqual(result.first?.id, strongGlobal.id)
+    }
+
+    func testFoodRecommendationsDecayOlderMealHistory() {
+        let reference = Date(timeIntervalSince1970: 2_000_000_000)
+        let recent = FoodPreset(name: "近期加餐", baseQuantity: 1, unit: .serving, calories: 100)
+        let old = FoodPreset(name: "很久前的加餐", baseQuantity: 1, unit: .serving, calories: 100)
+        for preset in [recent, old] {
+            preset.createdAt = reference.addingTimeInterval(-180 * 86_400)
+            preset.lastUsedAt = reference.addingTimeInterval(-180 * 86_400)
+        }
+        recent.lastUsedAt = reference
+
+        let recentLog = FoodLogEntry(
+            date: reference,
+            meal: .snack,
+            presetID: recent.id,
+            name: recent.name,
+            quantity: 1,
+            unit: recent.unit.rawValue,
+            calories: recent.calories
+        )
+        recentLog.createdAt = reference
+        let oldLog = FoodLogEntry(
+            date: reference.addingTimeInterval(-180 * 86_400),
+            meal: .snack,
+            presetID: old.id,
+            name: old.name,
+            quantity: 1,
+            unit: old.unit.rawValue,
+            calories: old.calories
+        )
+        oldLog.createdAt = reference.addingTimeInterval(-180 * 86_400)
+
+        let result = FoodPresetOrdering.sortedForMeal(
+            [old, recent],
+            foodLogs: [oldLog, recentLog],
+            meal: .snack,
+            referenceDate: reference
+        )
+
+        XCTAssertEqual(result.first?.id, recent.id)
+    }
+
+    func testWatchFoodPresetSnapshotDecodesLegacyPayloadWithoutRecommendationScores() throws {
+        struct LegacySnapshot: Codable {
+            let id: UUID
+            let name: String
+            let baseQuantity: Double
+            let unit: String
+            let calories: Double
+            let activityAt: Date
+        }
+
+        let legacy = LegacySnapshot(
+            id: UUID(),
+            name: "苏打饼干",
+            baseQuantity: 1,
+            unit: "份",
+            calories: 120,
+            activityAt: .now
+        )
+        let decoded = try JSONDecoder().decode(
+            WatchFoodPresetSnapshot.self,
+            from: JSONEncoder().encode(legacy)
+        )
+
+        XCTAssertEqual(decoded.id, legacy.id)
+        XCTAssertNil(decoded.recommendationScores)
     }
 
     func testWidgetMetricsExposeTodayAndWeekDeficits() {
@@ -1105,6 +1654,88 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertFalse(store.clear())
     }
 
+    func testWatchDashboardRoundTripsAndExcludesTodayFromTargetDeviation() throws {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let snapshot = WidgetCalorieSnapshot(
+            generatedAt: .now,
+            isOnboarded: true,
+            fallbackDailyBudget: 1_900,
+            days: [
+                WidgetCalorieDay(
+                    date: yesterday,
+                    baseBudget: 1_900,
+                    exercise: 0,
+                    consumed: 1_600,
+                    targetDeficit: 400,
+                    currentDeficit: 550
+                ),
+                WidgetCalorieDay(
+                    date: today,
+                    baseBudget: 1_900,
+                    exercise: 0,
+                    consumed: 500,
+                    targetDeficit: 400,
+                    currentDeficit: 1_000
+                )
+            ]
+        )
+        let presetID = UUID()
+        let dashboard = WatchDashboardSnapshot(
+            calorieSnapshot: snapshot,
+            presets: [
+                WatchFoodPresetSnapshot(
+                    id: presetID,
+                    name: "米饭",
+                    baseQuantity: 1,
+                    unit: "碗",
+                    calories: 200,
+                    activityAt: .now
+                )
+            ],
+            processedOperationIDs: [UUID()],
+            credentialState: WatchCredentialState(revision: 3, isConfigured: true)
+        )
+
+        let decoded = try JSONDecoder().decode(
+            WatchDashboardSnapshot.self,
+            from: JSONEncoder().encode(dashboard)
+        )
+
+        XCTAssertEqual(decoded, dashboard)
+        XCTAssertEqual(decoded.presets.first?.id, presetID)
+        XCTAssertEqual(decoded.targetDeviationBeforeToday, 150, accuracy: 0.001)
+    }
+
+    func testWatchFoodRecordCommandRoundTripsWithoutLosingOperationID() throws {
+        let operationID = UUID()
+        let presetID = UUID()
+        let command = WatchFoodRecordCommand(
+            id: operationID,
+            createdAt: .now,
+            mealRaw: MealType.lunch.rawValue,
+            source: .library,
+            items: [
+                WatchFoodRecordItem(
+                    presetID: presetID,
+                    name: "米饭",
+                    quantity: 2,
+                    unit: "碗",
+                    calories: 400,
+                    servings: 2
+                )
+            ]
+        )
+
+        let envelope = try WatchWireEnvelope(kind: .recordCommand, payload: command)
+        let decoded = try envelope.decode(WatchFoodRecordCommand.self)
+
+        XCTAssertEqual(decoded, command)
+        XCTAssertEqual(decoded.id, operationID)
+        XCTAssertEqual(decoded.items.first?.presetID, presetID)
+    }
+
     @MainActor
     func testHomeScreenQuickActionRoutes() {
         let router = AppRouter.shared
@@ -1146,4 +1777,40 @@ final class HealthCalculatorTests: XCTestCase {
         XCTAssertFalse(router.open(url: URL(string: "https://example.com/budget")!))
         XCTAssertFalse(router.open(url: URL(string: "tiantianhealth://unknown")!))
     }
+}
+
+private final class DeepSeekMockURLProtocol: URLProtocol {
+    static var responses: [(Int, Data)] = []
+    private(set) static var requestCount = 0
+    private static let lock = NSLock()
+
+    static func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        responses = []
+        requestCount = 0
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.lock()
+        let index = Self.requestCount
+        Self.requestCount += 1
+        let response = Self.responses[min(index, Self.responses.count - 1)]
+        Self.lock.unlock()
+
+        let http = HTTPURLResponse(
+            url: request.url!,
+            statusCode: response.0,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json", "x-request-id": "test-\(index + 1)"]
+        )!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: response.1)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

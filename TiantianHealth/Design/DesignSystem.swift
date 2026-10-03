@@ -3,8 +3,10 @@ import SwiftUI
 enum AppTheme {
     static let green = Color(red: 24 / 255, green: 163 / 255, blue: 104 / 255)
     static let deepGreen = Color(red: 16 / 255, green: 101 / 255, blue: 68 / 255)
+    static let intakeBlue = Color(red: 45 / 255, green: 132 / 255, blue: 153 / 255)
     static let orange = Color(red: 239 / 255, green: 126 / 255, blue: 51 / 255)
     static let deepOrange = Color(red: 194 / 255, green: 76 / 255, blue: 30 / 255)
+    static let dangerRed = Color(red: 211 / 255, green: 55 / 255, blue: 48 / 255)
     static let background = Color(red: 247 / 255, green: 249 / 255, blue: 246 / 255)
     static let surface = Color.white
     static let softSurface = Color(red: 239 / 255, green: 246 / 255, blue: 241 / 255)
@@ -95,7 +97,7 @@ struct IntakeEnergyProgressBar: View {
                 Spacer()
                 Text("\(Int(max(0, consumed).rounded())) kcal")
                     .font(.subheadline.bold().monospacedDigit())
-                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.textPrimary)
+                    .foregroundStyle(exceeded > 0 ? AppTheme.dangerRed : AppTheme.textPrimary)
                     .contentTransition(.numericText())
             }
             GeometryReader { proxy in
@@ -107,9 +109,9 @@ struct IntakeEnergyProgressBar: View {
                         .frame(width: width * ratio(segments.unconsumedReservedDeficit))
                         .offset(x: width * ratio(segments.reservedDeficitStart))
                     HStack(spacing: 0) {
-                        AppTheme.orange
+                        AppTheme.intakeBlue
                             .frame(width: width * ratio(segments.safeConsumed))
-                        AppTheme.deepOrange
+                        AppTheme.dangerRed
                             .frame(width: width * ratio(segments.exceededIntakeLimit))
                         Spacer(minLength: 0)
                     }
@@ -121,13 +123,13 @@ struct IntakeEnergyProgressBar: View {
             HStack(spacing: 5) {
                 Spacer()
                 Circle()
-                    .fill(exceeded > 0 ? AppTheme.deepOrange : AppTheme.orange.opacity(0.35))
+                    .fill(exceeded > 0 ? AppTheme.dangerRed : AppTheme.orange.opacity(0.35))
                     .frame(width: 7, height: 7)
                 Text(exceeded > 0
                      ? "已突破 \(Int(exceeded.rounded())) kcal"
                      : "预留热量缺口 \(Int(max(0, targetDeficit).rounded())) kcal")
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(exceeded > 0 ? AppTheme.deepOrange : AppTheme.secondaryText)
+                    .foregroundStyle(exceeded > 0 ? AppTheme.dangerRed : AppTheme.secondaryText)
                     .contentTransition(.numericText())
             }
         }

@@ -9,6 +9,11 @@ enum AppTab: Int, Hashable {
     case me
 }
 
+enum MeDestination: Hashable {
+    case foodLibrary
+    case photoAnalyzer
+}
+
 enum QuickActionDestination: Equatable {
     case weight
     case meal(MealType)
@@ -24,6 +29,7 @@ final class AppRouter: ObservableObject {
     static let shared = AppRouter()
 
     @Published var selectedTab: AppTab = .today
+    @Published var mePath: [MeDestination] = []
     @Published private(set) var pendingQuickAction: PendingQuickAction?
 
     private init() {}
@@ -56,6 +62,11 @@ final class AppRouter: ObservableObject {
 
     func clearPendingShortcut() {
         pendingQuickAction = nil
+    }
+
+    func showFoodLibrary() {
+        selectedTab = .me
+        mePath = [.foodLibrary]
     }
 
     @discardableResult
@@ -180,6 +191,14 @@ struct TiantianHealthApp: App {
                     modelContainer.mainContext.insert(
                         FoodPreset(name: "冰心茉莉清茶", baseQuantity: 1, unit: .serving, calories: 6)
                     )
+                    let fixture = FoodPhotoAnalyzerView.uiTestingAnalysis
+                    modelContainer.mainContext.insert(
+                        try FoodPhotoAnalysisRecord(
+                            imageFilename: "ui-test-history.jpg",
+                            overallName: fixture.overallName,
+                            analysis: fixture
+                        )
+                    )
                 }
                 try modelContainer.mainContext.save()
                 UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
@@ -205,6 +224,7 @@ struct RootView: View {
     @AppStorage("didMigrateActualExerciseV1") private var didMigrateActualExerciseV1 = false
     @Query private var profiles: [UserProfile]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weights: [WeightEntry]
+    @Query private var presets: [FoodPreset]
     @Query private var foodLogs: [FoodLogEntry]
     @Query private var exerciseLogs: [ExerciseLogEntry]
     @Query private var healthStates: [HealthIntegrationState]
@@ -239,6 +259,15 @@ struct RootView: View {
             isOnboarded: hasCompletedOnboarding,
             profile: currentProfile,
             calorieDays: widgetCalorieDays
+        )
+    }
+
+    private var watchSyncSource: PhoneWatchSyncSource {
+        PhoneWatchSyncSource(
+            calorieSource: widgetSnapshotSource,
+            presets: presets,
+            foodLogs: foodLogs,
+            referenceDate: Calendar.current.date(byAdding: .day, value: 1, to: currentDay) ?? currentDay
         )
     }
 
@@ -285,6 +314,10 @@ struct RootView: View {
         }
         .task(id: widgetSnapshotSource) {
             WidgetSnapshotPublisher.publish(widgetSnapshotSource)
+        }
+        .task(id: watchSyncSource) {
+            PhoneWatchConnectivityCoordinator.shared.configure(modelContext: modelContext)
+            PhoneWatchConnectivityCoordinator.shared.publish(watchSyncSource)
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }

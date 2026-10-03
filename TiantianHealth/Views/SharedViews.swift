@@ -142,8 +142,15 @@ struct MeasurementWheel: View {
     private var wholeRange: ClosedRange<Int> {
         Int(floor(range.lowerBound))...Int(floor(range.upperBound))
     }
+    private var decimalPlaces: Int {
+        if step < 0.1 { return 2 }
+        if step < 1 { return 1 }
+        return 0
+    }
+    private var fractionScale: Int { decimalPlaces == 2 ? 100 : 10 }
     private var decimalDigits: [Int] {
-        step >= 0.2 ? [0, 2, 4, 6, 8] : Array(0...9)
+        let increment = max(1, Int((step * Double(fractionScale)).rounded()))
+        return Array(stride(from: 0, to: fractionScale, by: increment))
     }
     private var wholePart: Binding<Int> {
         Binding(
@@ -157,11 +164,11 @@ struct MeasurementWheel: View {
     private var decimalPart: Binding<Int> {
         Binding(
             get: {
-                let digit = Int(((value - floor(value)) * 10).rounded()) % 10
+                let digit = Int(((value - floor(value)) * Double(fractionScale)).rounded()) % fractionScale
                 return decimalDigits.min(by: { abs($0 - digit) < abs($1 - digit) }) ?? 0
             },
             set: { digit in
-                value = clamped(floor(value) + Double(digit) / 10)
+                value = clamped(floor(value) + Double(digit) / Double(fractionScale))
             }
         )
     }
@@ -179,7 +186,9 @@ struct MeasurementWheel: View {
                     Text(".").font(.title2.bold())
                     Picker("小数", selection: decimalPart) {
                         ForEach(decimalDigits, id: \.self) { digit in
-                            Text("\(digit)").font(.title3.weight(.semibold).monospacedDigit()).tag(digit)
+                            Text(decimalPlaces == 2 && digit < 10 ? "0\(digit)" : "\(digit)")
+                                .font(.title3.weight(.semibold).monospacedDigit())
+                                .tag(digit)
                         }
                     }
                     .pickerStyle(.wheel)
@@ -213,7 +222,7 @@ struct MeasurementWheel: View {
     }
 
     private func formatted(_ number: Double) -> String {
-        number.formatted(.number.precision(.fractionLength(step < 1 ? 1 : 0)))
+        number.formatted(.number.precision(.fractionLength(decimalPlaces)))
     }
 
     private func clamped(_ number: Double) -> Double {
@@ -345,7 +354,7 @@ struct WeightEntrySheet: View {
         _displayWeight = State(initialValue: unit.displayValue(fromKilograms: initialWeightKG))
     }
 
-    private var step: Double { unit == .kg ? 0.1 : 0.2 }
+    private var step: Double { unit == .kg ? 0.01 : 0.02 }
     private var kilograms: Double { unit.kilograms(fromDisplayValue: displayWeight) }
 
     var body: some View {
@@ -379,7 +388,7 @@ struct WeightEntrySheet: View {
                     )
                     HStack(spacing: 12) {
                         adjustButton(systemName: "minus") { displayWeight = max(step, displayWeight - step) }
-                        Text("精确调整 \(step.formatted(.number.precision(.fractionLength(1)))) \(unit.rawValue)")
+                        Text("精确调整 \(step.formatted(.number.precision(.fractionLength(2)))) \(unit.rawValue)")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
                         adjustButton(systemName: "plus") { displayWeight += step }
@@ -424,7 +433,7 @@ struct WeightEntrySheet: View {
 
     private func contextMessage(difference: Double) -> String {
         if abs(difference) < 0.05 { return "和上次记录接近，继续按当前节奏即可。" }
-        let amount = abs(difference).formatted(.number.precision(.fractionLength(1)))
+        let amount = abs(difference).formatted(.number.precision(.fractionLength(2)))
         return "比上次\(difference > 0 ? "高" : "低") \(amount) \(unit.rawValue)。短期波动常来自水分和饮食。"
     }
 }

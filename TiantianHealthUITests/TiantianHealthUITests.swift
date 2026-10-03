@@ -100,6 +100,9 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["本周热量缺口"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["本周实现热量缺口"].exists)
         XCTAssertTrue(app.staticTexts["本周目标热量缺口"].exists)
+        XCTAssertTrue(app.staticTexts["weekly-fat-equivalent"].exists)
+        XCTAssertTrue(app.staticTexts["weekly-weight-change"].exists)
+        XCTAssertTrue(app.staticTexts["goal-arrival-estimate"].exists)
         XCTAssertTrue(app.staticTexts["目标偏离"].exists)
         XCTAssertFalse(app.staticTexts["本周预测缺口"].exists)
         XCTAssertTrue(app.staticTexts["每天的缺口"].exists)
@@ -192,10 +195,11 @@ final class TiantianHealthUITests: XCTestCase {
 
         let weightChart = app.otherElements["weight-chart"]
         XCTAssertTrue(weightChart.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["65.01 kg"].exists)
         let chartStart = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.55))
         let chartEnd = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.55))
         chartStart.press(forDuration: 0.2, thenDragTo: chartEnd)
-        XCTAssertTrue(app.staticTexts["65.1 kg"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["65.10 kg"].exists)
 
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 4))
@@ -261,12 +265,30 @@ final class TiantianHealthUITests: XCTestCase {
         let chartStart = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.55))
         let chartEnd = weightChart.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.55))
         chartStart.press(forDuration: 0.2, thenDragTo: chartEnd)
-        let selectionExpectation = expectation(
-            for: NSPredicate(format: "value CONTAINS %@", "80.5 kg"),
-            evaluatedWith: weightChart
-        )
-        wait(for: [selectionExpectation], timeout: 3)
+        XCTAssertEqual(weightChart.value as? String, "未选择记录")
         capture("11-weight-chart-scrubbing")
+    }
+
+    func testFoodLibraryDeleteConfirmationKeepsRowUntilConfirmed() throws {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-photo-analysis"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 8))
+        app.tabBars.buttons["我的"].tap()
+        app.staticTexts["我的食材库"].tap()
+        XCTAssertTrue(app.navigationBars["我的食材库"].waitForExistence(timeout: 4))
+
+        let row = app.buttons["food-library-row-冰心茉莉清茶"]
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        row.swipeLeft()
+        app.buttons["删除"].tap()
+
+        XCTAssertTrue(app.staticTexts["删除“冰心茉莉清茶”？"].waitForExistence(timeout: 3))
+        XCTAssertTrue(row.exists)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.2)).tap()
+        XCTAssertTrue(row.exists)
     }
 
     func testPhotoAnalysisResultLayoutAndDuplicateResolution() throws {
@@ -297,6 +319,17 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["冰块"].firstMatch.exists, true)
         capture("15-photo-analysis-result")
 
+        app.buttons["API Key 设置"].tap()
+        XCTAssertTrue(app.buttons["deepseek-api-logs"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons["refresh-deepseek-balance"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["人民币总余额"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["¥108.60"].waitForExistence(timeout: 4))
+        app.buttons["deepseek-api-logs"].tap()
+        XCTAssertTrue(app.navigationBars["API 调用日志"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["暂无 API 调用"].exists)
+        app.navigationBars["API 调用日志"].buttons["关闭"].tap()
+        app.buttons.matching(identifier: "xmark").firstMatch.tap()
+
         app.buttons["photo-save-result"].tap()
         XCTAssertTrue(app.staticTexts["保存分析结果"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.segmentedControls["photo-save-grouping"].exists)
@@ -314,8 +347,14 @@ final class TiantianHealthUITests: XCTestCase {
         XCTAssertTrue(app.buttons["confirm-duplicate-foods"].exists)
         capture("17-photo-analysis-duplicate")
         app.buttons["confirm-duplicate-foods"].tap()
-        XCTAssertTrue(app.alerts["操作提示"].waitForExistence(timeout: 4))
-        app.alerts["操作提示"].buttons["知道了"].tap()
+        XCTAssertTrue(app.navigationBars["我的食材库"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["冰心茉莉清茶"].exists)
+
+        app.navigationBars["我的食材库"].buttons["我的"].tap()
+        let analyzerAgain = app.buttons["food-photo-analyzer"]
+        for _ in 0..<3 where !analyzerAgain.isHittable { app.swipeUp() }
+        analyzerAgain.tap()
+        XCTAssertTrue(app.buttons["photo-save-result"].waitForExistence(timeout: 4))
 
         app.buttons["photo-save-result"].tap()
         app.segmentedControls["photo-save-grouping"].buttons["整份保存"].tap()
@@ -325,6 +364,31 @@ final class TiantianHealthUITests: XCTestCase {
         app.buttons["photo-confirm-save"].tap()
         XCTAssertTrue(app.navigationBars["今天"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["茉莉清茶套餐"].exists)
+    }
+
+    func testPhotoAnalysisHistoryCanBeReusedWithoutReanalysis() throws {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-photo-analysis"]
+        app.launch()
+
+        app.tabBars.buttons["我的"].tap()
+        let analyzer = app.buttons["food-photo-analyzer"]
+        for _ in 0..<3 where !analyzer.isHittable { app.swipeUp() }
+        analyzer.tap()
+
+        let history = app.buttons["photo-analysis-history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 4))
+        history.tap()
+        XCTAssertTrue(app.navigationBars["分析历史"].waitForExistence(timeout: 4))
+        app.staticTexts["茉莉清茶套餐"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["历史详情"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons["再次使用分析结果"].exists)
+        app.buttons["再次使用分析结果"].tap()
+
+        XCTAssertTrue(app.navigationBars["拍照查热量"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons["photo-save-result"].exists)
+        XCTAssertFalse(app.buttons["重新分析"].exists)
     }
 
     private func capture(_ name: String) {

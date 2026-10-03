@@ -79,6 +79,29 @@ enum HealthCalculator {
         let completedPastDayCount: Int
     }
 
+    struct WeeklyWeightProgress: Equatable {
+        enum Context: Equatable {
+            case previousDay
+            case currentWeek
+            case weekStart
+        }
+
+        let context: Context
+        let baselineDate: Date
+        let baselineWeightKG: Double
+        let latestDate: Date
+        let latestWeightKG: Double
+
+        var changeKG: Double { latestWeightKG - baselineWeightKG }
+    }
+
+    struct GoalArrivalEstimate: Equatable {
+        let remainingWeightKG: Double
+        let dailyDeficit: Double
+        let remainingDays: Int
+        let estimatedDate: Date
+    }
+
     struct DailyIntakePlan: Equatable {
         let expenditureBasis: Double
         let targetDeficit: Double
@@ -231,6 +254,74 @@ enum HealthCalculator {
 
     static func theoreticalFatEquivalentKG(calorieDeficit: Double) -> Double {
         max(0, calorieDeficit) / 7_700
+    }
+
+    static func weeklyWeightProgress(
+        measurements: [WeightMeasurement],
+        weekStart: Date,
+        referenceDate: Date = .now,
+        calendar: Calendar = .current
+    ) -> WeeklyWeightProgress? {
+        let normalized = latestWeightMeasurementsPerDay(measurements, calendar: calendar)
+            .filter { $0.measuredAt <= referenceDate }
+        let startOfWeek = calendar.startOfDay(for: weekStart)
+        let referenceDay = calendar.startOfDay(for: referenceDate)
+        let measurementsThisWeek = normalized.filter {
+            $0.measuredAt >= startOfWeek && $0.measuredAt <= referenceDate
+        }
+        guard let firstThisWeek = measurementsThisWeek.first else { return nil }
+
+        if calendar.isDate(referenceDay, inSameDayAs: startOfWeek),
+           let previousDay = calendar.date(byAdding: .day, value: -1, to: startOfWeek),
+           let previousMeasurement = normalized.last(where: {
+               calendar.isDate($0.measuredAt, inSameDayAs: previousDay)
+           }) {
+            return WeeklyWeightProgress(
+                context: .previousDay,
+                baselineDate: previousMeasurement.measuredAt,
+                baselineWeightKG: previousMeasurement.weightKG,
+                latestDate: firstThisWeek.measuredAt,
+                latestWeightKG: firstThisWeek.weightKG
+            )
+        }
+
+        guard let latestThisWeek = measurementsThisWeek.last,
+              !calendar.isDate(latestThisWeek.measuredAt, inSameDayAs: firstThisWeek.measuredAt) else {
+            return WeeklyWeightProgress(
+                context: .weekStart,
+                baselineDate: firstThisWeek.measuredAt,
+                baselineWeightKG: firstThisWeek.weightKG,
+                latestDate: firstThisWeek.measuredAt,
+                latestWeightKG: firstThisWeek.weightKG
+            )
+        }
+
+        return WeeklyWeightProgress(
+            context: .currentWeek,
+            baselineDate: firstThisWeek.measuredAt,
+            baselineWeightKG: firstThisWeek.weightKG,
+            latestDate: latestThisWeek.measuredAt,
+            latestWeightKG: latestThisWeek.weightKG
+        )
+    }
+
+    static func goalArrivalEstimate(
+        currentWeightKG: Double,
+        targetWeightKG: Double,
+        dailyDeficit: Double,
+        referenceDate: Date = .now,
+        calendar: Calendar = .current
+    ) -> GoalArrivalEstimate? {
+        let remaining = currentWeightKG - targetWeightKG
+        guard remaining > 0, dailyDeficit > 0, dailyDeficit.isFinite else { return nil }
+        let days = max(1, Int(ceil(remaining * 7_700 / dailyDeficit)))
+        guard let estimatedDate = calendar.date(byAdding: .day, value: days, to: referenceDate) else { return nil }
+        return GoalArrivalEstimate(
+            remainingWeightKG: remaining,
+            dailyDeficit: dailyDeficit,
+            remainingDays: days,
+            estimatedDate: estimatedDate
+        )
     }
 
     static func dailyCalorieTarget(tdee: Double, weightKG: Double, pace: GoalPace, sex: BiologicalSex) -> Double {

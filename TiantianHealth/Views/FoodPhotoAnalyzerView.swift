@@ -4,7 +4,6 @@ import SwiftUI
 import UIKit
 
 struct FoodPhotoAnalyzerView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var router: AppRouter
     @Query private var presets: [FoodPreset]
@@ -27,12 +26,15 @@ struct FoodPhotoAnalyzerView: View {
     @State private var editingItem: EditableFoodAnalysisItem?
     @State private var isWorking = false
     @State private var errorMessage: String?
-    @State private var successMessage: String?
     @State private var feedback = 0
     @State private var showingDuplicateResolution = false
     @State private var duplicateConflicts: [FoodAnalysisDuplicateConflict] = []
     @State private var pendingSaveRequest: FoodAnalysisSaveRequest?
     @State private var pendingSaveItems: [EditableFoodAnalysisItem] = []
+    @State private var isUsingHistory = false
+    @State private var resultScrollRequest = 0
+    @FocusState private var isNoteFocused: Bool
+    private let resultAnchor = "photo-analysis-result-anchor"
 
     init() {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-photo-analysis") {
@@ -48,18 +50,31 @@ struct FoodPhotoAnalyzerView: View {
     private var selectedCalories: Double { selectedItems.reduce(0) { $0 + $1.calories } }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if !hasKey, analysis == nil {
-                    keySetupCard
-                } else {
-                    if hasKey { sourceCard }
-                    if let image { previewCard(image) }
-                    if let analysis { resultCard(analysis) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 16) {
+                    if !hasKey, analysis == nil {
+                        keySetupCard
+                    } else {
+                        if hasKey { sourceCard }
+                        if let image { previewCard(image) }
+                        if let analysis {
+                            resultCard(analysis)
+                                .id(resultAnchor)
+                        }
+                    }
+                }
+                .padding(18)
+                .padding(.bottom, 28)
+            }
+            .onChange(of: resultScrollRequest) { _, _ in
+                Task { @MainActor in
+                    await Task.yield()
+                    withAnimation(.snappy(duration: 0.35)) {
+                        proxy.scrollTo(resultAnchor, anchor: .top)
+                    }
                 }
             }
-            .padding(18)
-            .padding(.bottom, 28)
         }
         .appScreenBackground()
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -90,6 +105,7 @@ struct FoodPhotoAnalyzerView: View {
                 overallName = ""
                 userNote = ""
                 currentHistoryID = nil
+                isUsingHistory = false
             }
             .ignoresSafeArea()
         }
@@ -105,6 +121,7 @@ struct FoodPhotoAnalyzerView: View {
                     overallName = ""
                     userNote = ""
                     currentHistoryID = nil
+                    isUsingHistory = false
                 }
             }
             .presentationDetents([.large])
@@ -151,11 +168,11 @@ struct FoodPhotoAnalyzerView: View {
         }
         .sensoryFeedback(.success, trigger: feedback)
         .alert("操作提示", isPresented: Binding(
-            get: { errorMessage != nil || successMessage != nil },
-            set: { if !$0 { errorMessage = nil; successMessage = nil } }
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
         )) {
-            Button("知道了", role: .cancel) { errorMessage = nil; successMessage = nil }
-        } message: { Text(errorMessage ?? successMessage ?? "") }
+            Button("知道了", role: .cancel) { errorMessage = nil }
+        } message: { Text(errorMessage ?? "") }
     }
 
     private var keySetupCard: some View {
@@ -198,28 +215,48 @@ struct FoodPhotoAnalyzerView: View {
                     .resizable().scaledToFit()
                     .frame(maxHeight: 280)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                TextField("补充说明（可选）", text: $userNote, axis: .vertical)
-                    .lineLimit(2...4)
-                    .padding(13)
-                    .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
-                    .accessibilityIdentifier("photo-analysis-note")
-                    .onChange(of: userNote) { _, value in
-                        if value.count > 200 { userNote = String(value.prefix(200)) }
-                    }
-                Button {
-                    Task { await analyze(image) }
-                } label: {
-                    if isWorking {
-                        HStack(spacing: 8) {
-                            SwiftUI.ProgressView().tint(.white)
-                            Text("正在分析…")
+                if isUsingHistory {
+                    if !userNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("补充说明")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AppTheme.secondaryText)
+                            Text(userNote)
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.textPrimary)
                         }
-                    } else {
-                        Label(analysis == nil ? "开始分析" : "重新分析", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(13)
+                        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                } else {
+                    TextField("补充说明（可选）", text: $userNote, axis: .vertical)
+                        .lineLimit(2...4)
+                        .padding(13)
+                        .background(AppTheme.softSurface, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityIdentifier("photo-analysis-note")
+                        .focused($isNoteFocused)
+                        .onChange(of: userNote) { _, value in
+                            if value.count > 200 { userNote = String(value.prefix(200)) }
+                        }
+                    if analysis == nil {
+                        Button {
+                            isNoteFocused = false
+                            Task { await analyze(image) }
+                        } label: {
+                            if isWorking {
+                                HStack(spacing: 8) {
+                                    SwiftUI.ProgressView().tint(.white)
+                                    Text("正在分析…")
+                                }
+                            } else {
+                                Label("开始分析", systemImage: "sparkles")
+                            }
+                        }
+                        .buttonStyle(BrandButtonStyle())
+                        .disabled(isWorking)
                     }
                 }
-                .buttonStyle(BrandButtonStyle())
-                .disabled(isWorking)
             }
         }
     }
@@ -302,6 +339,24 @@ struct FoodPhotoAnalyzerView: View {
                     }
                 }
             }
+            if !isUsingHistory, let image {
+                Button {
+                    isNoteFocused = false
+                    Task { await analyze(image) }
+                } label: {
+                    if isWorking {
+                        HStack(spacing: 8) {
+                            SwiftUI.ProgressView()
+                            Text("正在重新分析…")
+                        }
+                    } else {
+                        Label("重新分析", systemImage: "sparkles")
+                    }
+                }
+                .buttonStyle(BrandButtonStyle(isSecondary: true))
+                .disabled(isWorking)
+                .accessibilityIdentifier("photo-reanalyze")
+            }
         }
     }
 
@@ -329,17 +384,19 @@ struct FoodPhotoAnalyzerView: View {
             overallName = ""
             userNote = ""
             currentHistoryID = nil
+            isUsingHistory = false
         } catch { errorMessage = error.localizedDescription }
     }
 
     @MainActor private func analyze(_ image: UIImage) async {
+        isNoteFocused = false
         isWorking = true
         defer { isWorking = false }
         do {
             guard let key = try DeepSeekCredentialStore.read() else { throw DeepSeekAnalysisError.missingKey }
-            let data = try FoodPhotoImageProcessor.jpegData(from: image)
+            let processed = try FoodPhotoImageProcessor.process(image)
             let result = try await DeepSeekVisionService().analyze(
-                imageData: data,
+                imageData: processed.data,
                 apiKey: key,
                 userNote: userNote
             )
@@ -347,6 +404,7 @@ struct FoodPhotoAnalyzerView: View {
             items = result.items.map(EditableFoodAnalysisItem.init)
             overallName = result.overallName
             try persistHistory(result: result, image: image)
+            resultScrollRequest += 1
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -392,8 +450,6 @@ struct FoodPhotoAnalyzerView: View {
         duplicateChoices: [UUID: FoodAnalysisDuplicateChoice]
     ) {
         let now = Date.now
-        var added = 0
-        var reused = 0
 
         for item in items {
             let duplicate = FoodAnalysisLibraryPlanner.preferredDuplicate(for: item, in: presets)
@@ -401,11 +457,9 @@ struct FoodPhotoAnalyzerView: View {
             let preset: FoodPreset
             if shouldReuse, let duplicate {
                 preset = duplicate
-                reused += 1
             } else {
                 preset = FoodPreset(name: item.name, baseQuantity: 1, unit: .serving, calories: item.calories)
                 modelContext.insert(preset)
-                added += 1
             }
 
             guard request.action == .libraryAndRecord else { continue }
@@ -426,11 +480,10 @@ struct FoodPhotoAnalyzerView: View {
             feedback += 1
             clearPendingDuplicateResolution()
             if request.action == .libraryAndRecord {
-                dismiss()
+                router.mePath = []
                 router.selectedTab = .today
             } else {
-                let reusedText = reused > 0 ? "，复用 \(reused) 项" : ""
-                successMessage = "已加入食材库 \(added) 项\(reusedText)。"
+                router.showFoodLibrary()
             }
         } catch {
             modelContext.rollback()
@@ -525,6 +578,7 @@ struct FoodPhotoAnalyzerView: View {
         overallName = record.overallName
         userNote = savedAnalysis.userNote ?? ""
         currentHistoryID = record.id
+        isUsingHistory = true
     }
 
     private static var suggestedMeal: MealType {
@@ -536,7 +590,7 @@ struct FoodPhotoAnalyzerView: View {
         }
     }
 
-    private static let uiTestingAnalysis = FoodPhotoAnalysis(
+    static let uiTestingAnalysis = FoodPhotoAnalysis(
         sceneType: "drink",
         overallName: "茉莉清茶套餐",
         totalCalories: 1_206,
@@ -1038,7 +1092,7 @@ private struct FoodPhotoAnalysisHistoryDetailView: View {
         .navigationTitle("历史详情")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
-            Button("使用这次分析结果") { onUse(record) }
+            Button("再次使用分析结果") { onUse(record) }
                 .buttonStyle(BrandButtonStyle())
                 .padding(.horizontal, 18)
                 .padding(.vertical, 10)
@@ -1169,6 +1223,12 @@ private struct DeepSeekKeySheet: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
     @State private var showingClearConfirmation = false
+    @State private var showingLogs = false
+    @State private var latestLog: DeepSeekAPILogRecord?
+    @State private var accountBalance: DeepSeekAccountBalance?
+    @State private var isLoadingBalance = false
+    @State private var balanceError: String?
+    @State private var balanceUpdatedAt: Date?
 
     private var maskedKey: String {
         DeepSeekCredentialStore.maskedKey ?? "未找到已保存的密钥"
@@ -1197,6 +1257,39 @@ private struct DeepSeekKeySheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("clear-deepseek-key")
                 }
+
+                BrandSection("账户余额") {
+                    balanceContent
+                }
+
+            }
+
+            BrandSection("API 调用") {
+                Button {
+                    showingLogs = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "list.bullet.rectangle")
+                            .font(.title3)
+                            .foregroundStyle(AppTheme.green)
+                            .frame(width: 30)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("查看 API 调用日志")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.textPrimary)
+                            Text(latestLogSummary)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableRowButtonStyle(cornerRadius: 12))
+                .accessibilityIdentifier("deepseek-api-logs")
             }
 
             BrandSection(hasExistingKey ? "更换密钥" : "设置密钥") {
@@ -1236,6 +1329,181 @@ private struct DeepSeekKeySheet: View {
         .alert("无法完成", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("知道了", role: .cancel) {}
         } message: { Text(errorMessage ?? "") }
+        .sheet(isPresented: $showingLogs, onDismiss: loadLatestLog) {
+            DeepSeekAPILogListView()
+        }
+        .task {
+            loadLatestLog()
+            if hasExistingKey { await loadBalance() }
+        }
+    }
+
+    @ViewBuilder private var balanceContent: some View {
+        HStack(spacing: 10) {
+            if let accountBalance {
+                Circle()
+                    .fill(accountBalance.isAvailable ? AppTheme.green : AppTheme.orange)
+                    .frame(width: 8, height: 8)
+                Text(accountBalance.isAvailable ? "可用于 API 调用" : "当前余额不可用于 API 调用")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(accountBalance.isAvailable ? AppTheme.green : AppTheme.orange)
+            } else if isLoadingBalance {
+                SwiftUI.ProgressView()
+                    .controlSize(.small)
+                Text("正在读取 DeepSeek 余额…")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+            } else {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(AppTheme.orange)
+                Text("暂未读取到余额")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.textPrimary)
+            }
+            Spacer(minLength: 8)
+            Button {
+                Task { await loadBalance() }
+            } label: {
+                if isLoadingBalance, accountBalance != nil {
+                    SwiftUI.ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 30, height: 30)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 30, height: 30)
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppTheme.green)
+            .disabled(isLoadingBalance)
+            .accessibilityLabel("刷新账户余额")
+            .accessibilityIdentifier("refresh-deepseek-balance")
+        }
+
+        if let accountBalance {
+            let infos = sortedBalanceInfos(accountBalance.balanceInfos)
+            if infos.isEmpty {
+                Text("DeepSeek 未返回余额明细。")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            } else {
+                ForEach(Array(infos.enumerated()), id: \.element.id) { index, info in
+                    if index > 0 { Divider() }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(currencyTitle(info.currency))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.textPrimary)
+                            Spacer()
+                            Text(balanceAmount(info.totalBalance, currency: info.currency))
+                                .font(.title2.bold().monospacedDigit())
+                                .foregroundStyle(accountBalance.isAvailable ? AppTheme.green : AppTheme.orange)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                        }
+                        HStack(spacing: 12) {
+                            balanceMetric("充值余额", value: balanceAmount(info.toppedUpBalance, currency: info.currency))
+                            balanceMetric("赠金余额", value: balanceAmount(info.grantedBalance, currency: info.currency))
+                        }
+                    }
+                }
+            }
+        }
+
+        if let balanceError {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(balanceError)
+            }
+            .font(.caption)
+            .foregroundStyle(AppTheme.orange)
+        } else if let balanceUpdatedAt {
+            Text("更新于 \(balanceUpdatedAt.formatted(date: .omitted, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+    }
+
+    private func balanceMetric(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            Text(value)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(AppTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sortedBalanceInfos(_ infos: [DeepSeekAccountBalance.BalanceInfo]) -> [DeepSeekAccountBalance.BalanceInfo] {
+        infos.sorted {
+            let order = ["CNY": 0, "USD": 1]
+            return (order[$0.currency] ?? 2, $0.currency) < (order[$1.currency] ?? 2, $1.currency)
+        }
+    }
+
+    private func currencyTitle(_ currency: String) -> String {
+        switch currency {
+        case "CNY": "人民币总余额"
+        case "USD": "美元总余额"
+        default: "\(currency) 总余额"
+        }
+    }
+
+    private func balanceAmount(_ rawValue: String, currency: String) -> String {
+        let symbol = switch currency {
+        case "CNY": "¥"
+        case "USD": "$"
+        default: "\(currency) "
+        }
+        guard let decimal = Decimal(string: rawValue, locale: Locale(identifier: "en_US_POSIX")) else {
+            return "\(symbol)\(rawValue)"
+        }
+        return "\(symbol)\(decimal.formatted(.number.precision(.fractionLength(2))))"
+    }
+
+    private var latestLogSummary: String {
+        guard let latestLog else { return "保留最近 7 天，不记录密钥和照片原文" }
+        let status = latestLog.succeeded ? "成功" : "失败"
+        return "最近：\(latestLog.kind.rawValue) · \(status) · \(latestLog.duration.formatted(.number.precision(.fractionLength(1)))) 秒"
+    }
+
+    private func loadLatestLog() {
+        Task { @MainActor in
+            latestLog = await DeepSeekAPILogStore.shared.records().first
+        }
+    }
+
+    @MainActor private func loadBalance() async {
+        guard !isLoadingBalance else { return }
+        isLoadingBalance = true
+        balanceError = nil
+        defer { isLoadingBalance = false }
+
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-photo-analysis") {
+            accountBalance = DeepSeekAccountBalance(
+                isAvailable: true,
+                balanceInfos: [
+                    .init(currency: "CNY", totalBalance: "108.60", grantedBalance: "8.60", toppedUpBalance: "100.00")
+                ]
+            )
+            balanceUpdatedAt = .now
+            return
+        }
+
+        do {
+            guard let key = try DeepSeekCredentialStore.read() else {
+                throw DeepSeekAnalysisError.missingKey
+            }
+            accountBalance = try await DeepSeekAccountService().fetchBalance(apiKey: key)
+            balanceUpdatedAt = .now
+        } catch {
+            balanceError = error.localizedDescription
+        }
     }
 
     @MainActor private func replaceKey() async {
@@ -1256,11 +1524,227 @@ private struct DeepSeekKeySheet: View {
     private func clearKey() {
         do {
             try DeepSeekCredentialStore.delete()
+            accountBalance = nil
+            balanceError = nil
+            balanceUpdatedAt = nil
             onChanged()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+private struct DeepSeekAPILogListView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var records: [DeepSeekAPILogRecord] = []
+    @State private var showingClearConfirmation = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if records.isEmpty {
+                    ContentUnavailableView(
+                        "暂无 API 调用",
+                        systemImage: "network.slash",
+                        description: Text("验证密钥、分析照片或使用 Watch 语音识别后，会在这里显示最近 7 天的调用情况。")
+                    )
+                } else {
+                    List(records) { record in
+                        NavigationLink {
+                            DeepSeekAPILogDetailView(record: record)
+                        } label: {
+                            logRow(record)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("API 调用日志")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { dismiss() }
+                }
+                if !records.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("清空", role: .destructive) { showingClearConfirmation = true }
+                    }
+                }
+            }
+            .confirmationDialog("清空全部 API 调用日志？", isPresented: $showingClearConfirmation, titleVisibility: .visible) {
+                Button("清空日志", role: .destructive) {
+                    Task {
+                        await DeepSeekAPILogStore.shared.clear()
+                        records = []
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("不会删除 API Key、照片分析历史、食材或饮食记录。")
+            }
+            .task { records = await DeepSeekAPILogStore.shared.records() }
+            .onReceive(NotificationCenter.default.publisher(for: .deepSeekAPILogsDidChange)) { _ in
+                Task { records = await DeepSeekAPILogStore.shared.records() }
+            }
+        }
+    }
+
+    private func logRow(_ record: DeepSeekAPILogRecord) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label(record.kind.rawValue, systemImage: logIcon(record.kind))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(record.succeeded ? "成功" : "失败")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(record.succeeded ? AppTheme.green : AppTheme.orange)
+            }
+            Text(record.model)
+                .font(.caption.monospaced())
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(1)
+            HStack(spacing: 12) {
+                metric("输入", record.inputTokens.map(String.init) ?? "—")
+                metric("输出", record.outputTokens.map(String.init) ?? "—")
+                metric("HTTP", record.httpStatus.map(String.init) ?? "—")
+                metric("耗时", "\(record.duration.formatted(.number.precision(.fractionLength(1))))s")
+            }
+            HStack {
+                Text(record.createdAt.formatted(date: .abbreviated, time: .standard))
+                Spacer()
+                if record.attempt > 1 { Text("第 \(record.attempt) 次尝试") }
+            }
+            .font(.caption2)
+            .foregroundStyle(AppTheme.secondaryText)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func logIcon(_ kind: DeepSeekAPICallKind) -> String {
+        switch kind {
+        case .keyValidation: "key.fill"
+        case .photoAnalysis: "photo.badge.magnifyingglass"
+        case .watchVoiceAnalysis: "waveform"
+        }
+    }
+
+    private func metric(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.caption2).foregroundStyle(AppTheme.secondaryText)
+            Text(value).font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(AppTheme.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DeepSeekAPILogDetailView: View {
+    let record: DeepSeekAPILogRecord
+    @State private var thumbnail: UIImage?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                HealthCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(record.kind.rawValue).font(.headline)
+                            Spacer()
+                            Text(record.succeeded ? "成功" : "失败")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(record.succeeded ? AppTheme.green : AppTheme.orange)
+                        }
+                        detailRow("模型", record.model)
+                        detailRow("时间", record.createdAt.formatted(date: .numeric, time: .standard))
+                        detailRow("尝试", "第 \(record.attempt) 次")
+                        detailRow("HTTP 状态码", record.httpStatus.map(String.init) ?? "—")
+                        if let responseStatus = record.responseStatus {
+                            detailRow("模型响应状态", responseStatusText(responseStatus))
+                        }
+                        if let incompleteReason = record.incompleteReason {
+                            detailRow("未完成原因", incompleteReasonText(incompleteReason))
+                        }
+                        detailRow("耗时", "\(record.duration.formatted(.number.precision(.fractionLength(2)))) 秒")
+                        detailRow("输入 / 输出 Token", "\(record.inputTokens.map(String.init) ?? "—") / \(record.outputTokens.map(String.init) ?? "—")")
+                        detailRow("请求 / 响应大小", "\(byteText(record.requestBytes)) / \(byteText(record.responseBytes))")
+                        if let requestID = record.requestID { detailRow("Request ID", requestID) }
+                        if let error = record.errorMessage {
+                            Text(error).font(.caption).foregroundStyle(AppTheme.orange)
+                        }
+                    }
+                }
+                if let thumbnail {
+                    HealthCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("请求图片").font(.headline)
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxHeight: 240)
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                            Text("日志仅保存缩略图，原始 Base64 未记录。")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                }
+                jsonCard(title: "请求入参", text: record.requestJSON)
+                jsonCard(title: "响应出参", text: record.responseJSON ?? record.errorMessage ?? "无响应数据")
+            }
+            .padding(18)
+        }
+        .appScreenBackground()
+        .navigationTitle("调用详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard let data = await DeepSeekAPILogStore.shared.thumbnailData(filename: record.imageThumbnailFilename) else { return }
+            thumbnail = UIImage(data: data)
+        }
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title).foregroundStyle(AppTheme.secondaryText)
+            Spacer()
+            Text(value).foregroundStyle(AppTheme.textPrimary).multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+    }
+
+    private func jsonCard(title: String, text: String) -> some View {
+        HealthCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.headline)
+                Text(text)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(AppTheme.textPrimary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func responseStatusText(_ value: String) -> String {
+        switch value {
+        case "completed": "已完成"
+        case "incomplete": "未完成"
+        case "failed": "失败"
+        case "in_progress": "处理中"
+        default: value
+        }
+    }
+
+    private func incompleteReasonText(_ value: String) -> String {
+        switch value {
+        case "max_output_tokens": "达到输出 Token 上限"
+        case "content_filter": "内容过滤"
+        default: value
+        }
+    }
+
+    private func byteText(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 }
 
